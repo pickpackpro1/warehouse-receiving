@@ -84,6 +84,12 @@ input:focus,textarea:focus{outline:2px solid var(--brand);outline-offset:1px}
 #topbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:99;overflow:hidden;opacity:0;transition:opacity .15s}
 #topbar.on{opacity:1}
 #topbar i{position:absolute;top:0;bottom:0;width:40%;background:var(--brand);animation:slide 1s ease-in-out infinite}
+.rowsbox{background:var(--hold-bg);border-radius:12px;padding:10px 12px;margin:12px 0 0;font-size:13px}
+.rowsbox .rb-h{font-weight:700;color:var(--hold);margin-bottom:6px}
+.rowsbox .rb-r{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-top:1px solid rgba(128,128,128,.25)}
+.rowsbox .rb-r b{white-space:nowrap}
+.rowsbox .rb-r span{flex:1;min-width:0;color:var(--ink);overflow-wrap:anywhere}
+.rowsbox .rb-r em{font-style:normal;font-weight:800;white-space:nowrap}
 .hidden{display:none!important}
 #toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:90vw;background:var(--ink);color:var(--bg);padding:11px 16px;border-radius:10px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:99;text-align:center}
 #toast.show{opacity:1} #toast.err{background:var(--dmg);color:#fff}
@@ -221,8 +227,9 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
       <div class="card item" id="stepCount">
         <h2 id="iDesc"></h2>
         <div class="code" id="iCode"></div>
+        <div id="rowsBox" class="rowsbox hidden"></div>
         <div class="stats">
-          <div class="stat"><b id="iExp">0</b><span>EXPECTED</span></div>
+          <div class="stat"><b id="iExp">0</b><span>EXPECTED</span><small id="iExpSub"></small></div>
           <div class="stat"><b id="iRec">–</b><span>ALREADY RECEIVED</span><small id="iRecSub"></small></div>
         </div>
         <div class="hint" style="margin:-4px 0 12px">Inspect every book one by one, then count how many are in each condition. Unsure or borderline → <b>On Hold</b>.</div>
@@ -515,11 +522,23 @@ async function saveAdd(){
   }catch(e){ toast(e.message, true); }
   busy(b, false);
 }
+function renderRows(it){
+  const box = $('#rowsBox'), rows = it.rows || [], rel = it.related || [];
+  $('#iExpSub').textContent = rows.length > 1 ? 'total of ' + rows.length + ' rows' : '';
+  if (rows.length < 2 && !rel.length){ box.classList.add('hidden'); box.innerHTML = ''; return; }
+  let h = '';
+  if (rows.length > 1) h += `<div class="rb-h">⚠ This barcode is on ${rows.length} rows in the sheet — expected is the total (${it.expected})</div>` +
+    rows.map(r => `<div class="rb-r"><b>Row ${r.row}</b><span>${esc(r.info)}</span><em>qty ${r.expected}</em></div>`).join('');
+  if (rel.length) h += `<div class="rb-h" style="margin-top:8px">Same ISBN, different barcode (NOT in the total):</div>` +
+    rel.map(r => `<div class="rb-r"><b>Row ${r.row}</b><span>${esc(r.barcode)} · ${esc(r.info)}</span><em>qty ${r.expected}</em></div>`).join('');
+  box.innerHTML = h; box.classList.remove('hidden');
+}
 function openItem(it){
   cur = it; photos = []; renderThumbs();
   $('#iDesc').textContent = it.desc || '(no description)';
   $('#iCode').textContent = it.barcode;
   $('#iExp').textContent = it.expected;
+  renderRows(it);
   $('#iRec').textContent = it.received === null ? '–' : it.received;
   $('#iRecSub').textContent = it.received === null ? '' : breakdown(it);
   ['ln','vg','hold'].forEach(b => inp(b).value = '');
@@ -642,7 +661,7 @@ async function refreshList(silent){
 }
 const needsAssign = i => BUCKETS.some(b => i[b] > 0 && (!i.locs[b].box || !i.locs[b].pallet));
 function itemRow(i, right){
-  return `<div class="list-item" data-code="${esc(i.barcode)}"><div class="l"><b>${esc(i.desc || i.barcode)}</b><small>${esc(i.barcode)}</small></div><div class="r">${right}</div></div>`;
+  return `<div class="list-item" data-code="${esc(i.barcode)}"><div class="l"><b>${esc(i.desc || i.barcode)}</b><small>${esc(i.barcode)}${(i.rows || []).length > 1 ? ' · ' + i.rows.length + ' rows' : ''}</small></div><div class="r">${right}</div></div>`;
 }
 function renderAllLists(){
   // pending
