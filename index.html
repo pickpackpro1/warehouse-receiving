@@ -288,7 +288,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
     <button class="btn ghost sm" id="useDefault" type="button" style="margin-top:8px">Use built-in URL</button></div>
   <div class="field"><label for="cfgToken">Access code (only if you set TOKEN in Code.gs)</label>
     <input id="cfgToken" type="password" autocomplete="off"></div>
-  <div class="field"><label for="cfgUser">Your name (saved with each receipt)</label>
+  <div class="field"><label for="cfgUser">Your name (optional, saved with each receipt)</label>
     <input id="cfgUser" type="text" autocomplete="off"></div>
   <div class="hint">A URL is already built in. Paste a different one to change it.</div>
   <div class="row" style="margin-top:14px">
@@ -734,7 +734,6 @@ $('#testConn').onclick = async () => {
 
 refreshList(true);
 $('#scan').focus();
-if (!cfg.user) setTimeout(openSettings, 300);
 </script>
 </body>
 </html>
