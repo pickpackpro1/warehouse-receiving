@@ -90,6 +90,15 @@ input:focus,textarea:focus{outline:2px solid var(--brand);outline-offset:1px}
 .rowsbox .rb-r b{white-space:nowrap}
 .rowsbox .rb-r span{flex:1;min-width:0;color:var(--ink);overflow-wrap:anywhere}
 .rowsbox .rb-r em{font-style:normal;font-weight:800;white-space:nowrap}
+.pl{display:grid;grid-template-columns:1fr 1fr 74px 36px;gap:6px;align-items:center;margin-bottom:6px}
+.pl input{padding:10px 10px}
+.pl .plx{height:42px;border:0;border-radius:10px;background:rgba(0,0,0,.18);color:var(--ink);font-size:18px;cursor:pointer}
+.pl .plx:disabled{opacity:.25;cursor:default}
+.pl .plc{grid-column:1/-1;margin:0 0 8px;font-size:13px}
+.bk .rem{display:block;margin:2px 0 8px;font-size:13px;font-weight:700}
+.bk .rem.ok{color:var(--ln)} .bk .rem.short{color:var(--hold)} .bk .rem.over{color:var(--dmg)}
+.bk .addbox{margin-top:2px}
+select{width:100%;padding:12px 14px;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px}
 .hidden{display:none!important}
 #toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:90vw;background:var(--ink);color:var(--bg);padding:11px 16px;border-radius:10px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:99;text-align:center}
 #toast.show{opacity:1} #toast.err{background:var(--dmg);color:#fff}
@@ -228,6 +237,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
         <h2 id="iDesc"></h2>
         <div class="code" id="iCode"></div>
         <div id="rowsBox" class="rowsbox hidden"></div>
+        <div id="whereBox" class="hint hidden" style="margin:10px 0 0"></div>
         <div class="stats">
           <div class="stat"><b id="iExp">0</b><span>EXPECTED</span><small id="iExpSub"></small></div>
           <div class="stat"><b id="iRec">–</b><span>ALREADY RECEIVED</span><small id="iRecSub"></small></div>
@@ -327,6 +337,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
   <h2 style="margin-top:0" id="rTitle">Resolve On Hold</h2>
   <div class="hint" id="rInfo" style="margin:-6px 0 12px"></div>
   <div class="field"><label for="rUnits">Units to reclassify</label><input id="rUnits" type="number" inputmode="numeric" min="1" step="1"></div>
+  <div class="field hidden" id="rFromWrap"><label for="rFrom">Take them from hold box</label><select id="rFrom"></select></div>
   <label>YVENTURES decision</label>
   <div class="radio">
     <label><input type="radio" name="rTo" value="vg" checked><span>Very Good<br><small>FBM eligible</small></span></label>
@@ -396,33 +407,31 @@ const bkey = s => String(s).trim().toUpperCase();
 let closedBoxes = new Set();   // upper-cased box numbers marked complete
 
 /* ---------------- backend (Google Sheet via Apps Script) ---------------- */
-function boxOpenError(closed, box, current){
-  if (current && bkey(current) === bkey(box)) return null;
+function boxOpenError(closed, box, currentBoxes){
+  if ([].concat(currentBoxes || []).some(c => bkey(c) === bkey(box))) return null;
   return closed.has(bkey(box)) ? `Box ${box} is marked complete — nothing more can be added. Use another box, or reopen it first.` : null;
 }
 
-
-/* A BOX never holds a mix of sellable, on-hold and damaged stock (pallets may be shared). Mirrors Code.gs. */
+/* A BOX never holds a mix of sellable, on-hold and damaged stock (pallets may be shared). Mirrors Code.gs.
+   newLocs = { bucket: [{box, pallet, qty}, ...] } — the full list for each bucket being saved. */
 function segConflict(allItems, cur, newLocs){
-  const key = s => String(s).trim().toUpperCase();
-  const check = (cls, bucket, box, pallet, ob, op, ocls, where) => {
-    if (ocls === cls) return null;
-    if (ob && key(ob) === key(box)) return `Box ${box} is already used for ${where} — ${BNAME[bucket]} stock must be kept separate`;
-    return null;
-  };
-  for (const b of Object.keys(newLocs)){
-    const cls = BCLASS[b], {box, pallet} = newLocs[b];
+  for (const b of Object.keys(newLocs)) for (const pl of newLocs[b]){
+    const k = bkey(pl.box), cls = BCLASS[b];
     for (const it of allItems) for (const o of BUCKETS){
-      if (it.barcode === cur.barcode && (o === b || newLocs[o])) continue;
-      const e = check(cls, b, box, pallet, it.locs[o].box, it.locs[o].pallet, BCLASS[o], BNAME[o] + ' stock'); if (e) return e;
+      if (it.barcode === cur.barcode && newLocs[o]) continue;     // being replaced
+      if (BCLASS[o] !== cls && (it.locs[o] || []).some(x => bkey(x.box) === k))
+        return `Box ${pl.box} is already used for ${BNAME[o]} stock — ${BNAME[b]} stock must be kept separate`;
     }
-    for (const o of Object.keys(newLocs)){
-      if (o === b) continue;
-      const e = check(cls, b, box, pallet, newLocs[o].box, newLocs[o].pallet, BCLASS[o], BNAME[o] + ' stock on this same item'); if (e) return e;
-    }
+    for (const o of Object.keys(newLocs))
+      if (o !== b && BCLASS[o] !== cls && newLocs[o].some(x => bkey(x.box) === k))
+        return `Box ${pl.box} is used for both ${BNAME[b]} and ${BNAME[o]} on this item — use separate boxes`;
   }
   return null;
 }
+
+const placedQty = (i, b) => (i.locs[b] || []).reduce((s, x) => s + x.qty, 0);
+const fmtPlaced = (i, b) => (i.locs[b] || []).map(x => `${esc(x.box)} (${x.qty})`).join(', ');
+const palletsOf = (i, b) => [...new Set((i.locs[b] || []).map(x => x.pallet).filter(Boolean))].map(esc).join(', ');
 
 let pending = 0, busyT = null;
 const BUSY_TEXT = {lookup:'Searching the sheet…', add:'Adding to the sheet…', receive:'Saving to the sheet…', assign:'Saving to the sheet…', resolve:'Saving to the sheet…', box:'Saving to the sheet…', ping:'Testing connection…'};
@@ -539,6 +548,9 @@ function openItem(it){
   $('#iCode').textContent = it.barcode;
   $('#iExp').textContent = it.expected;
   renderRows(it);
+  const where = BUCKETS.filter(b => (it.locs[b] || []).length).map(b => `<b>${BNAME[b]}</b> → ${fmtPlaced(it, b)}`).join(' · ');
+  $('#whereBox').innerHTML = where ? '📦 Already stored: ' + where : '';
+  $('#whereBox').classList.toggle('hidden', !where);
   $('#iRec').textContent = it.received === null ? '–' : it.received;
   $('#iRecSub').textContent = it.received === null ? '' : breakdown(it);
   ['ln','vg','hold'].forEach(b => inp(b).value = '');
@@ -593,35 +605,87 @@ function recap(it){
   rl.textContent = `${it.desc} — ${it.received} of ${it.expected}` + (diff < 0 ? ` (short ${-diff})` : diff > 0 ? ` (over ${diff})` : ' ✓') + ` · ${breakdown(it)}`;
 }
 
+function plRow(b, d, canRemove){
+  return `<div class="pl" data-b="${b}">
+    <input type="text" class="plp" placeholder="Pallet no." value="${esc(d.pallet || '')}" autocomplete="off">
+    <input type="text" class="plb" placeholder="Box no." value="${esc(d.box || '')}" autocomplete="off">
+    <input type="number" class="plq" inputmode="numeric" min="1" step="1" placeholder="Qty" value="${d.qty ?? ''}">
+    <button type="button" class="plx" aria-label="Remove this box" ${canRemove ? '' : 'disabled'}>×</button>
+    <label class="chk plc"><input type="checkbox" class="plcl"> Box complete — close it, nothing more can be added</label></div>`;
+}
+function updateRem(card){
+  const total = Number(card.dataset.total);
+  const sum = [...card.querySelectorAll('.plq')].reduce((s, i) => s + (Number(i.value) || 0), 0);
+  const el = card.querySelector('.rem');
+  if (sum === total){ el.className = 'rem ok'; el.textContent = `✓ All ${total} placed`; }
+  else if (sum < total){ el.className = 'rem short'; el.textContent = `${sum} of ${total} placed — ${total - sum} still to place (add another box)`; }
+  else { el.className = 'rem over'; el.textContent = `${sum} placed but only ${total} counted — reduce a quantity`; }
+  const rows = card.querySelectorAll('.pl');
+  rows.forEach(r => r.querySelector('.plx').disabled = rows.length < 2);
+}
 function renderAssign(it){
   recap(it);
   $('#assignRows').innerHTML = BUCKETS.filter(b => it[b] > 0).map(b => {
-    const l = it.locs[b].box || it.locs[b].pallet ? it.locs[b] : (lastLoc[b] || {box:'', pallet:''});
     const sub = b === 'hold' ? 'segregated hold area' : b === 'dmg' ? 'segregated damaged area' : 'FBM sellable';
-    return `<div class="bk ${b}"><div class="bh">${BNAME[b]} · ${it[b]} unit${it[b] === 1 ? '' : 's'} <small>— ${sub}</small></div>
-      <div class="row"><input type="text" data-b="${b}" data-f="pallet" placeholder="Pallet no." value="${esc(l.pallet)}" autocomplete="off">
-      <input type="text" data-b="${b}" data-f="box" placeholder="Box no." value="${esc(l.box)}" autocomplete="off"></div>
-      <label class="chk"><input type="checkbox" data-b="${b}" data-f="close"> Box complete — close it, nothing more can be added</label></div>`;
+    const existing = it.locs[b] || [];
+    const rows = existing.length ? existing : [{...(lastLoc[b] || {box:'', pallet:''}), qty: it[b]}];
+    return `<div class="bk ${b}" data-b="${b}" data-total="${it[b]}">
+      <div class="bh">${BNAME[b]} · ${it[b]} unit${it[b] === 1 ? '' : 's'} <small>— ${sub}</small></div>
+      <div class="rem"></div>
+      <div class="pls">${rows.map(d => plRow(b, d, rows.length > 1)).join('')}</div>
+      <button type="button" class="btn ghost sm addbox">＋ Add another box for this book</button></div>`;
   }).join('');
-  const first = $('#assignRows input'); if (first) setTimeout(() => { first.focus(); first.select(); }, 0);
+  document.querySelectorAll('#assignRows .bk').forEach(updateRem);
+  const first = $('#assignRows .plp'); if (first) setTimeout(() => { first.focus(); first.select(); }, 0);
 }
+$('#assignRows').addEventListener('click', e => {
+  const card = e.target.closest('.bk'); if (!card) return;
+  if (e.target.closest('.addbox')){
+    const b = card.dataset.b, total = Number(card.dataset.total);
+    const sum = [...card.querySelectorAll('.plq')].reduce((s, i) => s + (Number(i.value) || 0), 0);
+    const last = [...card.querySelectorAll('.pl')].pop();
+    card.querySelector('.pls').insertAdjacentHTML('beforeend', plRow(b, {pallet: last ? last.querySelector('.plp').value : '', box: '', qty: sum < total ? total - sum : ''}, true));
+    updateRem(card);
+    card.querySelector('.pl:last-child .plb').focus();
+  } else if (e.target.closest('.plx')){
+    e.target.closest('.pl').remove(); updateRem(card);
+  }
+});
+$('#assignRows').addEventListener('input', e => { if (e.target.classList.contains('plq')) updateRem(e.target.closest('.bk')); });
 
 async function saveAssign(){
-  const locs = {};
-  const closeBoxes = [];
-  document.querySelectorAll('#assignRows input[type=text]').forEach(i => { (locs[i.dataset.b] ||= {})[i.dataset.f] = i.value.trim(); });
-  document.querySelectorAll('#assignRows input[type=checkbox]:checked').forEach(c => { const l = locs[c.dataset.b]; if (l && l.box) closeBoxes.push(l.box); });
-  for (const b of Object.keys(locs)) if (!locs[b].box || !locs[b].pallet){ toast(`${BNAME[b]}: enter both box and pallet number`, true); return; }
+  const locs = {}, closeBoxes = [];
+  let short = 0;
+  for (const card of document.querySelectorAll('#assignRows .bk')){
+    const b = card.dataset.b, total = Number(card.dataset.total), list = [];
+    const rows = [...card.querySelectorAll('.pl')];
+    for (const r of rows){
+      const box = r.querySelector('.plb').value.trim(), pallet = r.querySelector('.plp').value.trim(), qv = r.querySelector('.plq').value;
+      if (rows.length > 1 && !box && !pallet && qv === '') continue;     // untouched extra row
+      if (!box || !pallet){ toast(`${BNAME[b]}: every box needs a box number and a pallet number`, true); return; }
+      const qty = qv === '' && rows.length === 1 ? total : Number(qv);
+      if (!Number.isInteger(qty) || qty < 1){ toast(`${BNAME[b]}: box ${box} needs a quantity of 1 or more`, true); return; }
+      const dup = list.find(x => bkey(x.box) === bkey(box));
+      if (dup){ if (bkey(dup.pallet) !== bkey(pallet)){ toast(`${BNAME[b]}: box ${box} is listed on two different pallets`, true); return; } dup.qty += qty; }
+      else list.push({box, pallet, qty});
+      if (r.querySelector('.plcl').checked) closeBoxes.push(box);
+    }
+    const sum = list.reduce((s, x) => s + x.qty, 0);
+    if (sum > total){ toast(`${BNAME[b]}: ${sum} units placed but only ${total} counted`, true); return; }
+    short += total - sum;
+    locs[b] = list;
+  }
   let err = segConflict(items, cur, locs);
-  for (const b of Object.keys(locs)){ if (err) break; err = boxOpenError(closedBoxes, locs[b].box, cur.locs[b].box); }
+  for (const b of Object.keys(locs)){ for (const pl of locs[b]){ if (err) break; err = boxOpenError(closedBoxes, pl.box, (cur.locs[b] || []).map(x => x.box)); } }
   if (err){ toast(err, true); return; }
+  if (short > 0 && !confirm(`${short} unit${short === 1 ? '' : 's'} are not placed in any box yet. Save anyway? They will stay in the Assign tab.`)) return;
   const btn = $('#saveAssign'); busy(btn, true);
   try{
     const r = await api('assign', {barcode: cur.barcode, locs, closeBoxes});
-    Object.keys(locs).forEach(b => lastLoc[b] = locs[b]); store.set('lastLoc2', lastLoc);
-    $('#doneTitle').textContent = 'Saved';
-    $('#doneSub').innerHTML = esc(r.item.desc) + '<br>' + Object.keys(locs).map(b => `${BNAME[b]} ${r.item[b]} → Box ${esc(locs[b].box)} / Pallet ${esc(locs[b].pallet)}`).join('<br>');
-    if (closeBoxes.length) $('#doneSub').innerHTML += '<br><b>Box ' + closeBoxes.map(esc).join(', ') + ' marked complete ✓</b>';
+    Object.keys(locs).forEach(b => { if (locs[b][0]) lastLoc[b] = {box: locs[b][0].box, pallet: locs[b][0].pallet}; }); store.set('lastLoc2', lastLoc);
+    $('#doneTitle').textContent = short ? 'Saved (some units not placed)' : 'Saved';
+    $('#doneSub').innerHTML = esc(r.item.desc) + '<br>' + Object.keys(locs).map(b => `${BNAME[b]}: ` + locs[b].map(x => `${x.qty} → Box ${esc(x.box)} / Pallet ${esc(x.pallet)}`).join(', ')).join('<br>');
+    if (closeBoxes.length) $('#doneSub').innerHTML += '<br><b>Box ' + [...new Set(closeBoxes)].map(esc).join(', ') + ' marked complete ✓</b>';
     showStep(3); refreshList(true);
   }catch(e){ toast(e.message, true); }
   busy(btn, false);
@@ -659,7 +723,7 @@ async function refreshList(silent){
   try{ const r = await api('list'); items = r.items; closedBoxes = new Set(r.closed || []); renderAllLists(); if (!silent) toast('Refreshed'); }
   catch(e){ if (!silent) toast(e.message, true); }
 }
-const needsAssign = i => BUCKETS.some(b => i[b] > 0 && (!i.locs[b].box || !i.locs[b].pallet));
+const needsAssign = i => BUCKETS.some(b => i[b] > 0 && placedQty(i, b) < i[b]);
 function itemRow(i, right){
   return `<div class="list-item" data-code="${esc(i.barcode)}"><div class="l"><b>${esc(i.desc || i.barcode)}</b><small>${esc(i.barcode)}${(i.rows || []).length > 1 ? ' · ' + i.rows.length + ' rows' : ''}</small></div><div class="r">${right}</div></div>`;
 }
@@ -680,9 +744,10 @@ function renderAllLists(){
   // boxes
   const boxes = {};
   items.forEach(i => BUCKETS.forEach(b => {
-    const bx = i.locs[b].box; if (!(i[b] > 0) || !bx) return;
-    const k = bkey(bx), o = boxes[k] ||= {name:bx, cls:new Set(), titles:0, units:0, pallets:new Set()};
-    o.cls.add(BNAME[b]); o.titles++; o.units += i[b]; if (i.locs[b].pallet) o.pallets.add(i.locs[b].pallet);
+    (i.locs[b] || []).forEach(pl => {
+      const k = bkey(pl.box), o = boxes[k] ||= {name:pl.box, cls:new Set(), titles:0, units:0, pallets:new Set()};
+      o.cls.add(BNAME[b]); o.titles++; o.units += pl.qty; if (pl.pallet) o.pallets.add(pl.pallet);
+    });
   }));
   closedBoxes.forEach(k => { boxes[k] ||= {name:k, cls:new Set(), titles:0, units:0, pallets:new Set()}; });
   const bl = Object.entries(boxes).sort((a, b) => (closedBoxes.has(a[0]) - closedBoxes.has(b[0])) || a[0].localeCompare(b[0], undefined, {numeric:true}));
@@ -710,7 +775,7 @@ function renderAll(){
   });
   $('#allList').innerHTML = rows.length ? rows.map(i => {
     if (i.received === null) return itemRow(i, `<span class="badge b-none">Not received</span><br>expected ${i.expected}`);
-    const locs = BUCKETS.filter(b => i[b] > 0 && i.locs[b].box).map(b => `${BNAME[b]}: ${esc(i.locs[b].box)} / ${esc(i.locs[b].pallet)}`).join('<br>');
+    const locs = BUCKETS.filter(b => (i.locs[b] || []).length).map(b => `${BNAME[b]}: ${fmtPlaced(i, b)} · Pallet ${palletsOf(i, b)}` + (placedQty(i, b) < i[b] ? ` · ${i[b] - placedQty(i, b)} not placed` : '')).join('<br>');
     return itemRow(i, `<span class="badge b-${esc(i.status)}">${esc(i.status)}</span> ${i.received} / ${i.expected}<br>${esc(breakdown(i))}${locs ? '<br>' + locs : ''}`);
   }).join('') : '<div class="hint">No items.</div>';
 }
@@ -729,6 +794,9 @@ function openResolve(code){
   const hi = holdInfo(it);
   $('#rInfo').textContent = `${it.hold} on hold · ${hi ? hi.text : ''}${it.holdNote ? ' · “' + it.holdNote + '”' : ''}`;
   $('#rUnits').value = it.hold; $('#rUnits').max = it.hold;
+  const hb = it.locs.hold || [];
+  $('#rFrom').innerHTML = hb.map(x => `<option value="${esc(x.box)}">Box ${esc(x.box)} (${x.qty} on hold)</option>`).join('');
+  $('#rFromWrap').classList.toggle('hidden', hb.length < 2);
   $('#rBy').value = ''; $('#rClose').checked = false;
   document.querySelector('input[name=rTo][value=vg]').checked = true;
   fillResolveLoc();
@@ -736,7 +804,7 @@ function openResolve(code){
 }
 function fillResolveLoc(){
   const to = document.querySelector('input[name=rTo]:checked').value;
-  const l = (resolving.locs[to].box ? resolving.locs[to] : lastLoc[to]) || {box:'', pallet:''};
+  const l = lastLoc[to] || (resolving.locs[to] || [])[0] || {box:'', pallet:''};
   $('#rBox').value = l.box; $('#rPallet').value = l.pallet;
 }
 async function saveResolve(){
@@ -745,7 +813,9 @@ async function saveResolve(){
   if (!Number.isInteger(p.qty) || p.qty < 1 || p.qty > resolving.hold){ toast('Units must be between 1 and ' + resolving.hold, true); return; }
   if (!p.approvedBy){ toast('Enter who at YVENTURES approved this', true); return; }
   if (!p.box || !p.pallet){ toast('Enter the new box and pallet number', true); return; }
-  const err = segConflict(items, resolving, {[to]: {box: p.box, pallet: p.pallet}}) || boxOpenError(closedBoxes, p.box, resolving.locs[to].box);
+  const toList = [...(resolving.locs[to] || []), {box: p.box, pallet: p.pallet, qty: p.qty}];
+  const err = segConflict(items, resolving, {[to]: toList}) || boxOpenError(closedBoxes, p.box, (resolving.locs[to] || []).map(x => x.box));
+  if (!$('#rFromWrap').classList.contains('hidden')) p.fromBox = $('#rFrom').value;
   if (err){ toast(err, true); return; }
   p.closeBox = $('#rClose').checked;
   const b = $('#rSave'); busy(b, true);
@@ -824,7 +894,7 @@ $('#skipAssign').onclick = skipAssign;
 $('#assignRows').onkeydown = e => {
   if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
   e.preventDefault();
-  const all = [...document.querySelectorAll('#assignRows input[type=text]')], i = all.indexOf(e.target);
+  const all = [...document.querySelectorAll('#assignRows input:not([type=checkbox])')], i = all.indexOf(e.target);
   if (i < all.length - 1) all[i + 1].focus(); else saveAssign();
 };
 $('#nextItem').onclick = resetReceive;
