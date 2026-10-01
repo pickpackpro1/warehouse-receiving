@@ -283,12 +283,13 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
 <dialog id="settings">
   <h2 style="margin-top:0">Settings</h2>
   <div class="field"><label for="cfgUrl">Google Apps Script web app URL</label>
-    <input id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec"></div>
+    <input id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec">
+    <button class="btn ghost sm" id="useDefault" type="button" style="margin-top:8px">Use built-in URL</button></div>
   <div class="field"><label for="cfgToken">Access code (only if you set TOKEN in Code.gs)</label>
     <input id="cfgToken" type="password" autocomplete="off"></div>
   <div class="field"><label for="cfgUser">Your name (saved with each receipt)</label>
     <input id="cfgUser" type="text" autocomplete="off"></div>
-  <div class="hint">Leave the URL empty to use Demo mode with sample books stored in this browser only.</div>
+  <div class="hint">A URL is already built in. Paste a different one to change it, or clear the field to use Demo mode (sample books, this browser only).</div>
   <div class="row" style="margin-top:14px">
     <button class="btn ghost" id="testConn" type="button">Test connection</button>
     <button class="btn" id="saveCfg" type="button" style="margin-left:auto">Save</button>
@@ -307,7 +308,9 @@ const store = {
   get(k, d){ try { const v = localStorage.getItem('wr_' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v){ try { localStorage.setItem('wr_' + k, JSON.stringify(v)); } catch {} },
 };
-const cfg = { url: store.get('url', ''), token: store.get('token', ''), user: store.get('user', '') };
+const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbzG39MLv8MU7GFGP28iHRMLfiS3O5011xGh9cnCMvD0ZTobxyLuDoq5yaXkZGur_1iU/exec';
+const savedUrl = store.get('url', null);   // null = never changed → use the built-in URL; '' = deliberately demo mode
+const cfg = { url: savedUrl === null ? DEFAULT_URL : savedUrl, token: store.get('token', ''), user: store.get('user', '') };
 const isLive = () => !!cfg.url;
 
 const HOLD_DAYS = 14;               // keep in sync with Code.gs
@@ -801,6 +804,7 @@ $('#rCancel').onclick = () => $('#resolveDlg').close();
 $('#openGuide').onclick = () => $('#guideDlg').showModal();
 $('#guideClose').onclick = () => $('#guideDlg').close();
 $('#openSettings').onclick = openSettings;
+$('#useDefault').onclick = () => { $('#cfgUrl').value = DEFAULT_URL; };
 $('#saveCfg').onclick = () => {
   const c = readCfgForm(); Object.assign(cfg, c);
   store.set('url', c.url); store.set('token', c.token); store.set('user', c.user);
