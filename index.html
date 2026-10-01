@@ -260,8 +260,8 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
     <label><input type="radio" name="rTo" value="dmg"><span>Damaged<br><small>not FBM</small></span></label>
   </div>
   <div class="field"><label for="rBy">Approved by (name / email reference)</label><input id="rBy" type="text" autocomplete="off" placeholder="e.g. name or email reference, date"></div>
-  <div class="row field"><div style="flex:1"><label for="rBox">New box no.</label><input id="rBox" type="text" autocomplete="off"></div>
-    <div style="flex:1"><label for="rPallet">New pallet no.</label><input id="rPallet" type="text" autocomplete="off"></div></div>
+  <div class="row field"><div style="flex:1"><label for="rPallet">New pallet no.</label><input id="rPallet" type="text" autocomplete="off"></div>
+    <div style="flex:1"><label for="rBox">New box no.</label><input id="rBox" type="text" autocomplete="off"></div></div>
   <label class="chk" style="margin:-4px 0 14px"><input type="checkbox" id="rClose"> Box complete (close it after this)</label>
   <div class="row"><button class="btn ghost" type="button" id="rCancel">Cancel</button><button class="btn" type="button" id="rSave" style="margin-left:auto">Reclassify</button></div>
 </dialog>
@@ -476,8 +476,8 @@ function renderAssign(it){
     const l = it.locs[b].box || it.locs[b].pallet ? it.locs[b] : (lastLoc[b] || {box:'', pallet:''});
     const sub = b === 'hold' ? 'segregated hold area' : b === 'dmg' ? 'segregated damaged area' : 'FBM sellable';
     return `<div class="bk ${b}"><div class="bh">${BNAME[b]} · ${it[b]} unit${it[b] === 1 ? '' : 's'} <small>— ${sub}</small></div>
-      <div class="row"><input type="text" data-b="${b}" data-f="box" placeholder="Box no." value="${esc(l.box)}" autocomplete="off">
-      <input type="text" data-b="${b}" data-f="pallet" placeholder="Pallet no." value="${esc(l.pallet)}" autocomplete="off"></div>
+      <div class="row"><input type="text" data-b="${b}" data-f="pallet" placeholder="Pallet no." value="${esc(l.pallet)}" autocomplete="off">
+      <input type="text" data-b="${b}" data-f="box" placeholder="Box no." value="${esc(l.box)}" autocomplete="off"></div>
       <label class="chk"><input type="checkbox" data-b="${b}" data-f="close"> Box complete — close it, nothing more can be added</label></div>`;
   }).join('');
   const first = $('#assignRows input'); if (first) setTimeout(() => { first.focus(); first.select(); }, 0);
