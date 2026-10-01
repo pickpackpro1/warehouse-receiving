@@ -441,6 +441,19 @@ function segConflict(allItems, cur, newLocs){
   return null;
 }
 
+const ABBR = {ln:'LN', vg:'VG', hold:'Hold', dmg:'Dmg'};
+/* One entry per pallet + box with the condition split: [{pallet, box, ln, vg, hold, dmg}] — built from the box-level records. */
+function boxMap(i){
+  const m = {}, order = [];
+  BUCKETS.forEach(b => (i.locs[b] || []).forEach(pl => {
+    const k = bkey(pl.box);
+    if (!m[k]){ m[k] = {box: pl.box, pallet: pl.pallet || '', ln:0, vg:0, hold:0, dmg:0}; order.push(k); }
+    m[k][b] += pl.qty;
+  }));
+  return order.map(k => m[k]);
+}
+const condText = o => BUCKETS.filter(b => o[b] > 0).map(b => `${o[b]} ${ABBR[b]}`).join(' + ');
+const boxTotal = o => o.ln + o.vg + o.hold + o.dmg;
 const placedQty = (i, b) => (i.locs[b] || []).reduce((s, x) => s + x.qty, 0);
 const fmtPlaced = (i, b) => (i.locs[b] || []).map(x => `${esc(x.box)} (${x.qty})`).join(', ');
 const palletsOf = (i, b) => [...new Set((i.locs[b] || []).map(x => x.pallet).filter(Boolean))].map(esc).join(', ');
@@ -568,8 +581,10 @@ function openItem(it){
   $('#iCode').textContent = it.barcode;
   $('#iExp').textContent = it.expected;
   renderRows(it);
-  const where = BUCKETS.filter(b => (it.locs[b] || []).length).map(b => `<b>${BNAME[b]}</b> → ${fmtPlaced(it, b)}`).join(' · ');
-  $('#whereBox').innerHTML = where ? '📦 Already stored: ' + where : '';
+  const bm = boxMap(it), inBoxes = bm.reduce((s, o) => s + boxTotal(o), 0);
+  const where = bm.length ? '📦 <b>Where it is now</b><br>' + bm.map(o => `Pallet ${esc(o.pallet)} · Box ${esc(o.box)}: <b>${esc(condText(o))}</b>`).join('<br>') +
+    `<br>Total in boxes: <b>${inBoxes}</b>` + (it.received !== null ? ` of ${it.received} counted` : '') : '';
+  $('#whereBox').innerHTML = where;
   $('#whereBox').classList.toggle('hidden', !where);
   $('#iRec').textContent = it.received === null ? '–' : it.received;
   $('#iRecSub').textContent = it.received === null ? '' : breakdown(it);
@@ -795,16 +810,19 @@ function renderAllLists(){
   const boxes = {};
   items.forEach(i => BUCKETS.forEach(b => {
     (i.locs[b] || []).forEach(pl => {
-      const k = bkey(pl.box), o = boxes[k] ||= {name:pl.box, cls:new Set(), titles:0, units:0, pallets:new Set()};
-      o.cls.add(BNAME[b]); o.titles++; o.units += pl.qty; if (pl.pallet) o.pallets.add(pl.pallet);
+      const k = bkey(pl.box), o = boxes[k] ||= {name:pl.box, cls:new Set(), titles:0, units:0, pallets:new Set(), books:{}};
+      const bk = o.books[i.barcode] ||= (o.titles++, {desc: i.desc || i.barcode, ln:0, vg:0, hold:0, dmg:0});
+      bk[b] += pl.qty;
+      o.cls.add(BNAME[b]); o.units += pl.qty; if (pl.pallet) o.pallets.add(pl.pallet);
     });
   }));
-  closedBoxes.forEach(k => { boxes[k] ||= {name:k, cls:new Set(), titles:0, units:0, pallets:new Set()}; });
+  closedBoxes.forEach(k => { boxes[k] ||= {name:k, cls:new Set(), titles:0, units:0, pallets:new Set(), books:{}}; });
   const bl = Object.entries(boxes).sort((a, b) => (closedBoxes.has(a[0]) - closedBoxes.has(b[0])) || a[0].localeCompare(b[0], undefined, {numeric:true}));
   $('#boxList').innerHTML = bl.length ? bl.map(([k, o]) => {
     const done = closedBoxes.has(k);
     return `<div class="boxrow"><div><b>${esc(o.name)} <span class="badge ${done ? 'b-closed' : 'b-open'}">${done ? 'Complete' : 'Open'}</span></b>
-      <small>${[...o.cls].join(' / ') || 'empty'} · ${o.titles} title${o.titles === 1 ? '' : 's'} · ${o.units} unit${o.units === 1 ? '' : 's'}${o.pallets.size ? ' · Pallet ' + [...o.pallets].map(esc).join(', ') : ''}</small></div>
+      <small>${[...o.cls].join(' / ') || 'empty'} · ${o.titles} title${o.titles === 1 ? '' : 's'} · ${o.units} unit${o.units === 1 ? '' : 's'}${o.pallets.size ? ' · Pallet ' + [...o.pallets].map(esc).join(', ') : ''}</small>
+      ${Object.values(o.books).map(bk => `<small style="display:block;margin-top:2px">• ${esc(bk.desc)} — <b>${esc(condText(bk))}</b></small>`).join('')}</div>
       <button class="btn sm ${done ? 'ghost' : ''}" data-box="${esc(o.name)}" data-closed="${done ? 0 : 1}">${done ? 'Reopen' : '✓ Complete'}</button></div>`;
   }).join('') : '<div class="hint">No boxes yet — they appear once you assign box numbers.</div>';
   // summary
@@ -825,7 +843,8 @@ function renderAll(){
   });
   $('#allList').innerHTML = rows.length ? rows.map(i => {
     if (i.received === null) return itemRow(i, `<span class="badge b-none">Not received</span><br>expected ${i.expected}`);
-    const locs = BUCKETS.filter(b => (i.locs[b] || []).length).map(b => `${BNAME[b]}: ${fmtPlaced(i, b)} · Pallet ${palletsOf(i, b)}` + (placedQty(i, b) < i[b] ? ` · ${i[b] - placedQty(i, b)} not placed` : '')).join('<br>');
+    const bm = boxMap(i), inBoxes = bm.reduce((s, o) => s + boxTotal(o), 0), counted = i.ln + i.vg + i.hold + i.dmg;
+    const locs = bm.map(o => `P${esc(o.pallet)} · Box ${esc(o.box)}: ${esc(condText(o))}`).join('<br>') + (bm.length ? `<br><b>${inBoxes} in boxes</b>` : '') + (inBoxes < counted ? ` · ${counted - inBoxes} not placed` : '');
     return itemRow(i, `<span class="badge b-${esc(i.status)}">${esc(i.status)}</span> ${i.received} / ${i.expected}<br>${esc(breakdown(i))}${locs ? '<br>' + locs : ''}`);
   }).join('') : '<div class="hint">No items.</div>';
 }
