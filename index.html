@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Warehouse Receiving</title>
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --ink:#14181f; --muted:#667085; --line:#e3e6ec;
+  --brand:#2457f5; --brand-ink:#fff;
+  --ln:#0f8a4b; --ln-bg:#e4f6ec; --vg:#1d6fd1; --vg-bg:#e3effd; --hold:#b45309; --hold-bg:#fdf0d9; --dmg:#c0262d; --dmg-bg:#fde8e8;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0e1116; --card:#171b22; --ink:#eef1f6; --muted:#98a2b3; --line:#2a303b;
+    --brand:#5b84ff; --brand-ink:#0b1020;
+    --ln:#3ccf82; --ln-bg:#12301f; --vg:#6aa8ff; --vg-bg:#13253f; --hold:#f0b04a; --hold-bg:#352711; --dmg:#ff7a80; --dmg-bg:#3a1618; }
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{padding:0 16px calc(32px + env(safe-area-inset-bottom))}
+.wrap{max-width:560px;margin:0 auto}
+header{display:flex;align-items:center;justify-content:space-between;padding:16px 0 8px;gap:8px}
+h1{font-size:19px;margin:0}
+.pill{font-size:12px;font-weight:600;padding:3px 9px;border-radius:99px;background:var(--hold-bg);color:var(--hold);margin-left:8px}
+.pill.live{background:var(--ln-bg);color:var(--ln)}
+.icon-btn{background:none;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:8px 12px;font-size:14px;cursor:pointer}
+nav{display:flex;gap:6px;margin:8px 0 14px}
+nav button{flex:1;padding:10px 2px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--muted);font:600 12px inherit;cursor:pointer;white-space:nowrap}
+nav button.on{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+nav .count{display:inline-block;min-width:18px;margin-left:4px;padding:0 5px;border-radius:99px;background:var(--hold);color:#fff;font-size:11px}
+nav .count.late{background:var(--dmg)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:0 0 6px}
+input[type=text],input[type=number],input[type=url],input[type=password],textarea{width:100%;padding:12px 14px;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px}
+textarea{min-height:84px;resize:vertical}
+input:focus,textarea:focus{outline:2px solid var(--brand);outline-offset:1px}
+.row{display:flex;gap:8px}
+.btn{padding:13px 16px;border-radius:10px;border:0;background:var(--brand);color:var(--brand-ink);font:700 16px inherit;cursor:pointer}
+.btn.block{width:100%}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);font-weight:600}
+.btn.sm{padding:8px 12px;font-size:14px}
+.btn:disabled{opacity:.5;cursor:default}
+.hint{font-size:13px;color:var(--muted);margin-top:8px}
+#cam{margin-top:12px;border-radius:12px;overflow:hidden;display:none}
+#cam.on{display:block}
+.item h2{margin:0 0 2px;font-size:20px}
+.item .code{font:13px ui-monospace,Menlo,monospace;color:var(--muted)}
+.stats{display:flex;gap:10px;margin:14px 0}
+.stat{flex:1;background:var(--bg);border-radius:10px;padding:10px 12px}
+.stat b{display:block;font-size:26px;line-height:1.1}
+.stat span{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.03em}
+.stat small{display:block;font-size:12px;color:var(--muted);margin-top:2px}
+.crow{border-radius:12px;padding:10px 12px;margin-bottom:10px;border:1px solid transparent}
+.crow.ln{background:var(--ln-bg)} .crow.vg{background:var(--vg-bg)} .crow.hold{background:var(--hold-bg)}
+.crow .name{font-weight:700;font-size:15px;margin-bottom:6px;display:flex;justify-content:space-between}
+.crow.ln .name{color:var(--ln)} .crow.vg .name{color:var(--vg)} .crow.hold .name{color:var(--hold)}
+.crow .name small{font-weight:500;color:var(--muted)}
+.counter{display:flex;gap:8px;align-items:stretch}
+.counter input{font-size:24px;font-weight:700;text-align:center;padding:8px}
+.counter button{width:52px;font-size:24px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+.verdict{margin:10px 0 14px;padding:10px 12px;border-radius:10px;font-weight:600;font-size:15px;min-height:42px}
+.v-ok{background:var(--ln-bg);color:var(--ln)} .v-short{background:var(--hold-bg);color:var(--hold)} .v-over{background:var(--dmg-bg);color:var(--dmg)} .v-none{background:var(--bg);color:var(--muted)}
+.badge{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;border-radius:99px}
+.b-Received{background:var(--ln-bg);color:var(--ln)} .b-Short{background:var(--hold-bg);color:var(--hold)} .b-Over{background:var(--dmg-bg);color:var(--dmg)} .b-none{background:var(--bg);color:var(--muted)}
+.b-late{background:var(--dmg-bg);color:var(--dmg)}
+.list-item{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 0;border-top:1px solid var(--line);cursor:pointer}
+.list-item:first-child{border-top:0}
+.list-item .l{min-width:0}
+.list-item .l b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list-item .l small{color:var(--muted)}
+.list-item .r{text-align:right;font-size:13px;color:var(--muted)}
+.steps{display:flex;gap:6px;margin-bottom:12px}
+.steps i{flex:1;height:4px;border-radius:2px;background:var(--line)}
+.steps i.on{background:var(--brand)}
+.done{text-align:center;padding:18px 8px}
+.done .tick{font-size:44px}
+.hidden{display:none!important}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:90vw;background:var(--ink);color:var(--bg);padding:11px 16px;border-radius:10px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:99;text-align:center}
+#toast.show{opacity:1} #toast.err{background:var(--dmg);color:#fff}
+.filters{display:flex;gap:6px;margin:10px 0;flex-wrap:wrap}
+.filters button{padding:6px 12px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--muted);font:600 13px inherit;cursor:pointer}
+.filters button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+dialog{border:0;border-radius:14px;padding:18px;width:min(94vw,480px);max-height:90vh;background:var(--card);color:var(--ink)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+.field{margin-bottom:12px}
+.holdbox{background:var(--hold-bg);border-radius:12px;padding:12px;margin:4px 0 12px}
+.holdbox .hint{color:var(--hold)}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.thumbs div{position:relative;width:64px;height:64px}
+.thumbs img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.thumbs button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:0;background:var(--dmg);color:#fff;font-size:13px;cursor:pointer;line-height:1}
+.bk{border-radius:12px;padding:10px 12px;margin-bottom:10px}
+.bk.ln{background:var(--ln-bg)} .bk.vg{background:var(--vg-bg)} .bk.hold{background:var(--hold-bg)} .bk.dmg{background:var(--dmg-bg)}
+.bk .bh{font-weight:700;margin-bottom:8px;font-size:15px}
+.bk.ln .bh{color:var(--ln)} .bk.vg .bh{color:var(--vg)} .bk.hold .bh{color:var(--hold)} .bk.dmg .bh{color:var(--dmg)}
+.bk .bh small{font-weight:500;color:var(--muted)}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+.summary div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 6px;text-align:center}
+.summary b{display:block;font-size:20px}
+.summary span{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.03em}
+table.g{width:100%;border-collapse:collapse;font-size:13px}
+table.g th,table.g td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+table.g th.ln{background:var(--ln-bg);color:var(--ln)} table.g th.vg{background:var(--vg-bg);color:var(--vg)} table.g th.hold{background:var(--hold-bg);color:var(--hold)}
+table.g td:first-child{font-weight:700;background:var(--bg)}
+.boxrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;border-top:1px solid var(--line)}
+.boxrow:first-child{border-top:0}
+.boxrow b{display:block}
+.boxrow small{color:var(--muted)}
+.b-closed{background:var(--ln-bg);color:var(--ln)}
+.b-open{background:var(--vg-bg);color:var(--vg)}
+.chk{display:flex;align-items:center;gap:8px;margin:10px 0 0;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer}
+.chk input{width:22px;height:22px;flex:none}
+.radio{display:flex;gap:8px;margin-bottom:12px}
+.radio label{flex:1;margin:0;padding:11px;border:1px solid var(--line);border-radius:10px;text-align:center;cursor:pointer;color:var(--ink)}
+.radio input{display:none}
+.radio input:checked + span{font-weight:800}
+.radio label:has(input:checked){border-color:var(--brand);background:var(--bg)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div style="display:flex;align-items:center"><h1>Warehouse Receiving</h1><span id="mode" class="pill">Demo</span></div>
+    <div class="row"><button class="icon-btn" id="openGuide">📖 Guide</button><button class="icon-btn" id="openSettings">Settings</button></div>
+  </header>
+
+  <nav>
+    <button data-tab="receive" class="on">Receive</button>
+    <button data-tab="hold">On hold<span class="count hidden" id="holdCount">0</span></button>
+    <button data-tab="pending">Assign<span class="count hidden" id="pendCount">0</span></button>
+    <button data-tab="boxes">Boxes</button>
+    <button data-tab="all">All</button>
+  </nav>
+
+  <!-- RECEIVE -->
+  <section id="tab-receive">
+    <div class="card">
+      <label for="scan">Scan or type barcode / ISBN</label>
+      <form id="scanForm" class="row">
+        <input id="scan" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scan barcode…">
+        <button class="btn" type="submit">Go</button>
+      </form>
+      <div class="row" style="margin-top:10px">
+        <button class="btn ghost block" id="camBtn" type="button">📷 Scan with camera</button>
+      </div>
+      <div id="cam"></div>
+      <div class="hint">A USB / Bluetooth scanner works too — keep this box selected and scan.</div>
+    </div>
+
+    <div id="work" class="hidden">
+      <div class="steps"><i id="s1" class="on"></i><i id="s2"></i></div>
+
+      <!-- step 1: inspect & count -->
+      <div class="card item" id="stepCount">
+        <h2 id="iDesc"></h2>
+        <div class="code" id="iCode"></div>
+        <div class="stats">
+          <div class="stat"><b id="iExp">0</b><span>EXPECTED</span></div>
+          <div class="stat"><b id="iRec">–</b><span>ALREADY RECEIVED</span><small id="iRecSub"></small></div>
+        </div>
+        <div class="hint" style="margin:-4px 0 12px">Inspect every book one by one, then count how many are in each condition. Unsure or borderline → <b>On Hold</b>.</div>
+
+        <div class="crow ln" data-b="ln"><div class="name">Like New <small>FBM sellable</small></div>
+          <div class="counter"><button type="button" class="minus">−</button><input type="number" inputmode="numeric" min="0" step="1" placeholder="0"><button type="button" class="plus">+</button></div></div>
+        <div class="crow vg" data-b="vg"><div class="name">Very Good <small>FBM sellable</small></div>
+          <div class="counter"><button type="button" class="minus">−</button><input type="number" inputmode="numeric" min="0" step="1" placeholder="0"><button type="button" class="plus">+</button></div></div>
+        <div class="crow hold" data-b="hold"><div class="name">On Hold <small>not sellable</small></div>
+          <div class="counter"><button type="button" class="minus">−</button><input type="number" inputmode="numeric" min="0" step="1" placeholder="0"><button type="button" class="plus">+</button></div></div>
+
+        <div id="holdBox" class="holdbox hidden">
+          <label for="holdNote" style="color:var(--hold)">Describe the condition <span style="font-weight:500">(optional)</span></label>
+          <textarea id="holdNote" placeholder="e.g. Spine cracked, 6 pages loose near the middle…"></textarea>
+          <div style="margin-top:10px">
+            <label style="color:var(--hold)">Photos <span style="font-weight:500">(optional, but recommended)</span></label>
+            <input type="file" id="photoIn" accept="image/*" multiple class="hidden">
+            <button type="button" class="btn ghost sm" id="addPhoto">📷 Add photos</button>
+            <div class="thumbs" id="thumbs"></div>
+          </div>
+          <div class="hint">These books must be kept physically apart. A report with your photos (and description, if any) is emailed to YVENTURES, who must decide within 14 days.</div>
+        </div>
+
+        <div id="verdict" class="verdict v-none">Enter the number of books in each condition</div>
+        <button class="btn block" id="saveQty">Save inspection &amp; count</button>
+        <button class="btn ghost block" id="cancelItem" style="margin-top:8px">Cancel</button>
+      </div>
+
+      <!-- step 2: box + pallet -->
+      <div class="card hidden" id="stepAssign">
+        <div id="recapLine" class="verdict v-ok"></div>
+        <div id="assignRows"></div>
+        <button class="btn block" id="saveAssign">Save box &amp; pallet</button>
+        <button class="btn ghost block" id="skipAssign" style="margin-top:8px">Skip — assign later</button>
+        <div class="hint">Like New / Very Good (sellable), On Hold and Damaged must each use their own boxes and pallets — they can't be mixed. Last used numbers are pre-filled.</div>
+      </div>
+
+      <div class="card done hidden" id="stepDone">
+        <div class="tick">✅</div>
+        <h2 style="margin:6px 0" id="doneTitle">Done</h2>
+        <div class="hint" id="doneSub"></div>
+        <button class="btn block" id="nextItem" style="margin-top:14px">Scan next item</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ON HOLD -->
+  <section id="tab-hold" class="hidden">
+    <div class="card">
+      <b>On Hold — waiting for YVENTURES decision</b>
+      <div class="hint" style="margin-top:2px">Must be resolved within 14 days. Tap an item once you have approval.</div>
+      <div id="holdList"></div>
+    </div>
+  </section>
+
+  <!-- TO ASSIGN -->
+  <section id="tab-pending" class="hidden">
+    <div class="card">
+      <b>Counted but no box / pallet yet</b>
+      <div id="pendList"></div>
+    </div>
+  </section>
+
+  <!-- BOXES -->
+  <section id="tab-boxes" class="hidden">
+    <div class="card">
+      <b>Boxes</b>
+      <div class="hint" style="margin-top:2px">Mark a box <b>Complete</b> when it is full — nothing more can be added to it. Reopen it if you need to.</div>
+      <div id="boxList"></div>
+    </div>
+  </section>
+
+  <!-- ALL -->
+  <section id="tab-all" class="hidden">
+    <div class="summary">
+      <div><b id="sSell" style="color:var(--ln)">0</b><span>SELLABLE</span></div>
+      <div><b id="sHold" style="color:var(--hold)">0</b><span>ON HOLD</span></div>
+      <div><b id="sDmg" style="color:var(--dmg)">0</b><span>DAMAGED</span></div>
+      <div><b id="sLate" style="color:var(--dmg)">0</b><span>OVERDUE</span></div>
+    </div>
+    <div class="card">
+      <input id="search" type="text" placeholder="Search barcode or title…" autocomplete="off">
+      <div class="filters" id="filters">
+        <button data-f="" class="on">All</button><button data-f="open">Not received</button><button data-f="Short">Short</button>
+        <button data-f="Over">Over</button><button data-f="hold">On hold</button><button data-f="dmg">Damaged</button>
+      </div>
+      <div id="allList"></div>
+    </div>
+    <button class="btn ghost block" id="refresh">↻ Refresh from sheet</button>
+  </section>
+</div>
+
+<!-- resolve On Hold -->
+<dialog id="resolveDlg">
+  <h2 style="margin-top:0" id="rTitle">Resolve On Hold</h2>
+  <div class="hint" id="rInfo" style="margin:-6px 0 12px"></div>
+  <div class="field"><label for="rUnits">Units to reclassify</label><input id="rUnits" type="number" inputmode="numeric" min="1" step="1"></div>
+  <label>YVENTURES decision</label>
+  <div class="radio">
+    <label><input type="radio" name="rTo" value="vg" checked><span>Very Good<br><small>FBM eligible</small></span></label>
+    <label><input type="radio" name="rTo" value="dmg"><span>Damaged<br><small>not FBM</small></span></label>
+  </div>
+  <div class="field"><label for="rBy">Approved by (name / email reference)</label><input id="rBy" type="text" autocomplete="off" placeholder="e.g. booksop@yventures.com.sg – 2 Oct"></div>
+  <div class="row field"><div style="flex:1"><label for="rBox">New box no.</label><input id="rBox" type="text" autocomplete="off"></div>
+    <div style="flex:1"><label for="rPallet">New pallet no.</label><input id="rPallet" type="text" autocomplete="off"></div></div>
+  <label class="chk" style="margin:-4px 0 14px"><input type="checkbox" id="rClose"> Box complete (close it after this)</label>
+  <div class="row"><button class="btn ghost" type="button" id="rCancel">Cancel</button><button class="btn" type="button" id="rSave" style="margin-left:auto">Reclassify</button></div>
+</dialog>
+
+<!-- condition guide -->
+<dialog id="guideDlg">
+  <h2 style="margin-top:0">Book condition guide</h2>
+  <table class="g">
+    <tr><th></th><th class="ln">LIKE NEW</th><th class="vg">VERY GOOD</th><th class="hold">ON HOLD</th></tr>
+    <tr><td>Sellable</td><td>FBM</td><td>FBM</td><td>Not FBM</td></tr>
+    <tr><td>Cover &amp; binding</td><td>Clean, intact; spine intact, no creases/cracks; tight binding; no missing pages</td><td>Intact, securely attached; spine readable, not broken; secure binding; no missing pages</td><td>Torn/detached cover; broken spine; loose or falling-out pages; missing pages</td></tr>
+    <tr><td>Physical</td><td>No shelf wear, creases, bends or corner damage; no warping, water, mold, odor</td><td>Minor shelf wear, light creases or corner bumps OK; no severe warping, water, mold, strong odor</td><td>Severe damage; large tears/holes; severe warping; water damage; mold; musty/smoke/chemical odor</td></tr>
+    <tr><td>Cleanliness</td><td>Pages clean and crisp; no writing, stains or residue</td><td>Light pencil/pen/highlighting OK; no stains or heavy discoloration</td><td>Heavy writing; ink bleeding; stains, food, oil, grime; sticky residue or labels not removable</td></tr>
+    <tr><td>Overall</td><td>Appears unread or barely used; comparable to new</td><td>Fully readable, structurally sound; minor cosmetic flaws only</td><td>Readability/durability compromised; likely to cause complaints</td></tr>
+  </table>
+  <div class="hint"><b>Borderline or unclear → ON HOLD.</b> On Hold books are segregated, reported to YVENTURES with description + photos, and must be resolved (Very Good or Damaged) within 14 days. Damaged books are segregated, labeled, and wait for instructions. Report recurring damage patterns promptly.</div>
+  <button class="btn block" type="button" id="guideClose" style="margin-top:14px">Close</button>
+</dialog>
+
+<dialog id="settings">
+  <h2 style="margin-top:0">Settings</h2>
+  <div class="field"><label for="cfgUrl">Google Apps Script web app URL</label>
+    <input id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec"></div>
+  <div class="field"><label for="cfgToken">Access code (only if you set TOKEN in Code.gs)</label>
+    <input id="cfgToken" type="password" autocomplete="off"></div>
+  <div class="field"><label for="cfgUser">Your name (saved with each receipt)</label>
+    <input id="cfgUser" type="text" autocomplete="off"></div>
+  <div class="hint">Leave the URL empty to use Demo mode with sample books stored in this browser only.</div>
+  <div class="row" style="margin-top:14px">
+    <button class="btn ghost" id="testConn" type="button">Test connection</button>
+    <button class="btn" id="saveCfg" type="button" style="margin-left:auto">Save</button>
+  </div>
+  <div class="row" style="margin-top:8px"><button class="btn ghost block" id="resetDemo" type="button">Reset demo data</button></div>
+</dialog>
+
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store = {
+  get(k, d){ try { const v = localStorage.getItem('wr_' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v){ try { localStorage.setItem('wr_' + k, JSON.stringify(v)); } catch {} },
+};
+const cfg = { url: store.get('url', ''), token: store.get('token', ''), user: store.get('user', '') };
+const isLive = () => !!cfg.url;
+
+const HOLD_DAYS = 14;               // keep in sync with Code.gs
+const REQUIRE_HOLD_PHOTO = false;    // keep in sync with Code.gs
+const BUCKETS = ['ln','vg','hold','dmg'];
+const BNAME = {ln:'Like New', vg:'Very Good', hold:'On Hold', dmg:'Damaged'};
+const BCLASS = {ln:'sell', vg:'sell', hold:'hold', dmg:'dmg'};
+const sellable = i => i.ln + i.vg;
+const bkey = s => String(s).trim().toUpperCase();
+let closedBoxes = new Set();   // upper-cased box numbers marked complete
+
+/* ---------------- backend (live sheet or in-browser demo) ---------------- */
+const mk = (barcode, desc, expected) => ({barcode, desc, expected, ln:0, vg:0, hold:0, dmg:0, received:null, status:'',
+  locs:{ln:{box:'',pallet:''},vg:{box:'',pallet:''},hold:{box:'',pallet:''},dmg:{box:'',pallet:''}}, holdSince:'', holdNote:'', at:'', by:''});
+const DEMO_SEED = [
+  mk('9780000000011', 'Pocketbook of Clinical IR (Thieme)', 40),
+  mk('9780000000028', 'Effective Police Supervision Study Guide, 9th ed.', 25),
+  mk('9780000000035', 'Maritime Economics, 3rd ed.', 18),
+  mk('9780000000042', 'Aesthetic Facial Anatomy Essentials', 12),
+  mk('9780000000059', 'Diagnostic Neuropathology Atlas', 8),
+  mk('9780000000066', 'Introduction to Criminal Justice', 60),
+];
+const demoDb = {
+  load(){ let d = store.get('demo2', null); if(!d){ d = JSON.parse(JSON.stringify(DEMO_SEED)); store.set('demo2', d); } return d; },
+  save(d){ store.set('demo2', d); },
+  closed(){ return store.get('closed2', []); },
+  setClosed(a){ store.set('closed2', [...new Set(a)]); },
+};
+
+function boxOpenError(closed, box, current){
+  if (current && bkey(current) === bkey(box)) return null;
+  return closed.has(bkey(box)) ? `Box ${box} is marked complete — nothing more can be added. Use another box, or reopen it first.` : null;
+}
+
+const whole = (v, label) => { const n = Number(v === '' || v == null ? 0 : v); if (!Number.isInteger(n) || n < 0) throw new Error(label + ' must be a whole number'); return n; };
+
+/* Boxes/pallets of sellable, on-hold and damaged stock must never mix. Mirrors Code.gs. */
+function segConflict(allItems, cur, newLocs){
+  const key = s => String(s).trim().toUpperCase();
+  const check = (cls, bucket, box, pallet, ob, op, ocls, where) => {
+    if (ocls === cls) return null;
+    if (ob && key(ob) === key(box)) return `Box ${box} is already used for ${where} — ${BNAME[bucket]} stock must be kept separate`;
+    if (op && key(op) === key(pallet)) return `Pallet ${pallet} is already used for ${where} — ${BNAME[bucket]} stock must be kept separate`;
+    return null;
+  };
+  for (const b of Object.keys(newLocs)){
+    const cls = BCLASS[b], {box, pallet} = newLocs[b];
+    for (const it of allItems) for (const o of BUCKETS){
+      if (it.barcode === cur.barcode && (o === b || newLocs[o])) continue;
+      const e = check(cls, b, box, pallet, it.locs[o].box, it.locs[o].pallet, BCLASS[o], BNAME[o] + ' stock'); if (e) return e;
+    }
+    for (const o of Object.keys(newLocs)){
+      if (o === b) continue;
+      const e = check(cls, b, box, pallet, newLocs[o].box, newLocs[o].pallet, BCLASS[o], BNAME[o] + ' stock on this same item'); if (e) return e;
+    }
+  }
+  return null;
+}
+
+async function demoApi(action, p){
+  await new Promise(r => setTimeout(r, 120));
+  const db = demoDb.load();
+  const it = db.find(i => i.barcode === String(p.barcode || '').trim());
+  if (action === 'ping') return {ok:true, message:'Demo mode'};
+  if (action === 'list') return {ok:true, items:db, closed:demoDb.closed()};
+  if (action === 'box'){
+    const k = bkey(p.box || ''); if (!k) throw new Error('Box number missing');
+    const c = new Set(demoDb.closed()); p.closed ? c.add(k) : c.delete(k); demoDb.setClosed([...c]);
+    return {ok:true, closed:[...c]};
+  }
+  if (action === 'lookup') return it ? {ok:true, found:true, item:it} : {ok:true, found:false};
+  if (!it) throw new Error('Barcode not found');
+  if (action === 'receive'){
+    const c = {ln: whole(p.ln,'Like New'), vg: whole(p.vg,'Very Good'), hold: whole(p.hold,'On Hold')};
+    const note = String(p.holdNote || '').trim();
+    if (c.hold > 0){
+      if (REQUIRE_HOLD_PHOTO && !(p.photos || []).length) throw new Error('On Hold units need at least one photo as evidence');
+    }
+    const prevHold = it.hold;
+    Object.assign(it, c);
+    ['ln','vg','hold'].forEach(b => { if (!c[b]) it.locs[b] = {box:'', pallet:''}; });
+    it.received = c.ln + c.vg + c.hold + it.dmg;
+    it.status = it.received === it.expected ? 'Received' : it.received < it.expected ? 'Short' : 'Over';
+    it.at = new Date().toISOString(); it.by = p.user || '';
+    if (c.hold > 0){ if (!it.holdSince || !prevHold) it.holdSince = new Date().toISOString(); it.holdNote = note; }
+    else { it.holdSince = ''; it.holdNote = ''; }
+    demoDb.save(db);
+    return {ok:true, item:it, emailed: c.hold > 0, demoEmail: c.hold > 0};
+  }
+  if (action === 'assign'){
+    if (it.received === null) throw new Error('Receive this item first');
+    const locs = p.locs || {};
+    for (const b of Object.keys(locs)){
+      if (!(it[b] > 0)) throw new Error('No ' + BNAME[b] + ' units on this line');
+      if (!String(locs[b].box || '').trim() || !String(locs[b].pallet || '').trim()) throw new Error(BNAME[b] + ': box and pallet are both required');
+    }
+    const err = segConflict(db, it, locs); if (err) throw new Error(err);
+    const cl = new Set(demoDb.closed());
+    for (const b of Object.keys(locs)){ const e = boxOpenError(cl, locs[b].box, it.locs[b].box); if (e) throw new Error(e); }
+    Object.keys(locs).forEach(b => it.locs[b] = {box: locs[b].box.trim(), pallet: locs[b].pallet.trim()});
+    (p.closeBoxes || []).forEach(x => cl.add(bkey(x))); demoDb.setClosed([...cl]);
+    demoDb.save(db);
+    return {ok:true, item:it};
+  }
+  if (action === 'resolve'){
+    const to = p.to, qty = whole(p.qty, 'Units');
+    if (to !== 'vg' && to !== 'dmg') throw new Error('Reclassify as Very Good or Damaged');
+    if (!String(p.approvedBy || '').trim()) throw new Error('Enter who at YVENTURES approved this');
+    if (!String(p.box || '').trim() || !String(p.pallet || '').trim()) throw new Error('Box and pallet are required for the new location');
+    if (qty < 1 || qty > it.hold) throw new Error('Units must be between 1 and ' + it.hold);
+    const locs = {[to]: {box:p.box.trim(), pallet:p.pallet.trim()}};
+    const err = segConflict(db, it, locs); if (err) throw new Error(err);
+    const cl = new Set(demoDb.closed()); const e2 = boxOpenError(cl, p.box, it.locs[to].box); if (e2) throw new Error(e2);
+    if (p.closeBox){ cl.add(bkey(p.box)); demoDb.setClosed([...cl]); }
+    it.hold -= qty; it[to] += qty; it.locs[to] = locs[to];
+    if (!it.hold){ it.holdSince = ''; it.holdNote = ''; it.locs.hold = {box:'', pallet:''}; }
+    demoDb.save(db);
+    return {ok:true, item:it};
+  }
+  throw new Error('Unknown action');
+}
+
+async function api(action, p = {}){
+  if (!isLive()) return demoApi(action, p);
+  const body = {action, token: cfg.token, user: cfg.user, ...p};
+  const write = ['receive','assign','resolve','box'].includes(action);
+  let res;
+  try{
+    if (write) res = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body), redirect:'follow'}); // text/plain avoids CORS preflight
+    else res = await fetch(cfg.url + '?' + new URLSearchParams(body), {redirect:'follow'});
+  }catch{ throw new Error('Could not reach the sheet — check your internet and the web app URL'); }
+  let data;
+  try { data = await res.json(); } catch { throw new Error('Sheet did not answer correctly — check the web app URL and that access is set to "Anyone"'); }
+  if (!data.ok) throw new Error(data.error || 'Sheet error');
+  return data;
+}
+
+/* ---------------- ui helpers ---------------- */
+let toastT;
+function toast(msg, err){
+  const t = $('#toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(toastT); toastT = setTimeout(() => t.className = '', err ? 4500 : 2800);
+}
+function renderMode(){ const m = $('#mode'); m.textContent = isLive() ? 'Live' : 'Demo'; m.className = 'pill' + (isLive() ? ' live' : ''); }
+const busy = (btn, on) => btn.disabled = on;
+const breakdown = i => `LN ${i.ln} · VG ${i.vg} · Hold ${i.hold}` + (i.dmg ? ` · Dmg ${i.dmg}` : '');
+
+function holdInfo(i){
+  if (!i.hold || !i.holdSince) return null;
+  const left = Math.ceil((new Date(i.holdSince).getTime() + HOLD_DAYS * 864e5 - Date.now()) / 864e5);
+  if (left < 0) return {late:true, text:`OVERDUE by ${-left} day${left === -1 ? '' : 's'}`};
+  return {late:false, text: left === 0 ? 'Due today' : `${left} day${left === 1 ? '' : 's'} left`};
+}
+
+/* ---------------- receive flow ---------------- */
+let cur = null;
+let lastLoc = store.get('lastLoc2', {});
+let photos = [];   // [{name, data(base64), url}]
+
+function showStep(n){
+  $('#work').classList.remove('hidden');
+  $('#stepCount').classList.toggle('hidden', n !== 1);
+  $('#stepAssign').classList.toggle('hidden', n !== 2);
+  $('#stepDone').classList.toggle('hidden', n !== 3);
+  $('#s2').className = n >= 2 ? 'on' : '';
+  $('.steps').classList.toggle('hidden', n === 3);
+}
+function resetReceive(){ cur = null; photos = []; renderThumbs(); $('#work').classList.add('hidden'); $('#scan').value = ''; stopCam(); $('#scan').focus(); }
+
+async function lookup(code){
+  code = String(code).trim();
+  if (!code) return;
+  try{
+    const r = await api('lookup', {barcode: code});
+    if (!r.found){ toast('Barcode not in sheet: ' + code, true); $('#scan').select(); return; }
+    openItem(r.item);
+  }catch(e){ toast(e.message, true); }
+}
+
+const counts = () => ({ln: num('ln'), vg: num('vg'), hold: num('hold')});
+const inp = b => document.querySelector(`.crow[data-b=${b}] input`);
+const num = b => { const v = inp(b).value; return v === '' ? 0 : Number(v); };
+
+function openItem(it){
+  cur = it; photos = []; renderThumbs();
+  $('#iDesc').textContent = it.desc || '(no description)';
+  $('#iCode').textContent = it.barcode;
+  $('#iExp').textContent = it.expected;
+  $('#iRec').textContent = it.received === null ? '–' : it.received;
+  $('#iRecSub').textContent = it.received === null ? '' : breakdown(it);
+  ['ln','vg','hold'].forEach(b => inp(b).value = '');
+  $('#holdNote').value = it.hold ? it.holdNote : '';
+  updateVerdict();
+  showStep(1); stopCam();
+  inp('ln').focus();
+}
+
+function updateVerdict(){
+  const v = $('#verdict');
+  const anyTyped = ['ln','vg','hold'].some(b => inp(b).value !== '');
+  $('#holdBox').classList.toggle('hidden', !(num('hold') > 0));
+  if (!anyTyped || !cur){ v.className = 'verdict v-none'; v.textContent = 'Enter the number of books in each condition'; return; }
+  const c = counts(), total = c.ln + c.vg + c.hold, e = cur.expected, extra = cur.dmg ? ` (+${cur.dmg} damaged already on file)` : '';
+  const grand = total + cur.dmg;
+  const base = `${total} counted: ${c.ln + c.vg} sellable, ${c.hold} on hold${extra}`;
+  if (grand === e){ v.className = 'verdict v-ok'; v.textContent = `✓ Matches expected (${e}) — ${base}`; }
+  else if (grand < e){ v.className = 'verdict v-short'; v.textContent = `Short by ${e - grand} — will be saved as Short. ${base}`; }
+  else { v.className = 'verdict v-over'; v.textContent = `Over by ${grand - e} — will be saved as Over. ${base}`; }
+}
+
+async function saveQty(){
+  const typed = ['ln','vg','hold'].filter(b => inp(b).value !== '');
+  if (!typed.length){ toast('Enter how many books are in each condition', true); return; }
+  const c = counts();
+  if (Object.values(c).some(n => !Number.isInteger(n) || n < 0)){ toast('Counts must be whole numbers', true); return; }
+  const note = $('#holdNote').value.trim();
+  if (c.hold > 0){
+    if (REQUIRE_HOLD_PHOTO && !photos.length){ toast('Add at least one photo of the On Hold books', true); return; }
+  }
+  if (cur.received !== null && !confirm('This item was already counted (' + breakdown(cur) + '). Replace those counts?')) return;
+  const b = $('#saveQty'); busy(b, true);
+  try{
+    const r = await api('receive', {barcode: cur.barcode, ...c, holdNote: note, photos: photos.map(p => ({name:p.name, data:p.data}))});
+    cur = r.item;
+    if (c.hold > 0){
+      if (r.demoEmail) toast('Demo: On Hold report would be emailed to YVENTURES');
+      else if (r.emailed) toast('✓ On Hold report emailed to YVENTURES');
+      else if (r.emailError) toast('Saved, but the report email FAILED: ' + r.emailError + ' — send it manually', true);
+      else toast('Saved (email reports are switched off in Code.gs)');
+    }
+    renderAssign(cur); showStep(2);
+    refreshList(true);
+  }catch(e){ toast(e.message, true); }
+  busy(b, false);
+}
+
+function recap(it){
+  const diff = it.received - it.expected;
+  const rl = $('#recapLine');
+  rl.className = 'verdict ' + (diff === 0 ? 'v-ok' : diff < 0 ? 'v-short' : 'v-over');
+  rl.textContent = `${it.desc} — ${it.received} of ${it.expected}` + (diff < 0 ? ` (short ${-diff})` : diff > 0 ? ` (over ${diff})` : ' ✓') + ` · ${breakdown(it)}`;
+}
+
+function renderAssign(it){
+  recap(it);
+  $('#assignRows').innerHTML = BUCKETS.filter(b => it[b] > 0).map(b => {
+    const l = it.locs[b].box || it.locs[b].pallet ? it.locs[b] : (lastLoc[b] || {box:'', pallet:''});
+    const sub = b === 'hold' ? 'segregated hold area' : b === 'dmg' ? 'segregated damaged area' : 'FBM sellable';
+    return `<div class="bk ${b}"><div class="bh">${BNAME[b]} · ${it[b]} unit${it[b] === 1 ? '' : 's'} <small>— ${sub}</small></div>
+      <div class="row"><input type="text" data-b="${b}" data-f="box" placeholder="Box no." value="${esc(l.box)}" autocomplete="off">
+      <input type="text" data-b="${b}" data-f="pallet" placeholder="Pallet no." value="${esc(l.pallet)}" autocomplete="off"></div>
+      <label class="chk"><input type="checkbox" data-b="${b}" data-f="close"> Box complete — close it, nothing more can be added</label></div>`;
+  }).join('');
+  const first = $('#assignRows input'); if (first) setTimeout(() => { first.focus(); first.select(); }, 0);
+}
+
+async function saveAssign(){
+  const locs = {};
+  const closeBoxes = [];
+  document.querySelectorAll('#assignRows input[type=text]').forEach(i => { (locs[i.dataset.b] ||= {})[i.dataset.f] = i.value.trim(); });
+  document.querySelectorAll('#assignRows input[type=checkbox]:checked').forEach(c => { const l = locs[c.dataset.b]; if (l && l.box) closeBoxes.push(l.box); });
+  for (const b of Object.keys(locs)) if (!locs[b].box || !locs[b].pallet){ toast(`${BNAME[b]}: enter both box and pallet number`, true); return; }
+  let err = segConflict(items, cur, locs);
+  for (const b of Object.keys(locs)){ if (err) break; err = boxOpenError(closedBoxes, locs[b].box, cur.locs[b].box); }
+  if (err){ toast(err, true); return; }
+  const btn = $('#saveAssign'); busy(btn, true);
+  try{
+    const r = await api('assign', {barcode: cur.barcode, locs, closeBoxes});
+    Object.keys(locs).forEach(b => lastLoc[b] = locs[b]); store.set('lastLoc2', lastLoc);
+    $('#doneTitle').textContent = 'Saved';
+    $('#doneSub').innerHTML = esc(r.item.desc) + '<br>' + Object.keys(locs).map(b => `${BNAME[b]} ${r.item[b]} → Box ${esc(locs[b].box)} / Pallet ${esc(locs[b].pallet)}`).join('<br>');
+    if (closeBoxes.length) $('#doneSub').innerHTML += '<br><b>Box ' + closeBoxes.map(esc).join(', ') + ' marked complete ✓</b>';
+    showStep(3); refreshList(true);
+  }catch(e){ toast(e.message, true); }
+  busy(btn, false);
+}
+
+function skipAssign(){
+  $('#doneTitle').textContent = 'Counted';
+  $('#doneSub').textContent = cur.desc + ' · ' + breakdown(cur) + '. Box & pallet still to assign (see “Assign”).';
+  showStep(3);
+}
+
+/* ---------------- photos ---------------- */
+function resizeToJpeg(file, max = 1280, q = 0.72){
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      const dataUrl = c.toDataURL('image/jpeg', q);
+      res({name: (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', data: dataUrl.split(',')[1], url: dataUrl});
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Could not read that image')); };
+    img.src = url;
+  });
+}
+function renderThumbs(){
+  $('#thumbs').innerHTML = photos.map((p, i) => `<div><img src="${p.url}" alt=""><button type="button" data-i="${i}" aria-label="Remove photo">×</button></div>`).join('');
+}
+
+/* ---------------- lists ---------------- */
+let items = [], filter = '';
+async function refreshList(silent){
+  try{ const r = await api('list'); items = r.items; closedBoxes = new Set(r.closed || []); renderAllLists(); if (!silent) toast('Refreshed'); }
+  catch(e){ if (!silent) toast(e.message, true); }
+}
+const needsAssign = i => BUCKETS.some(b => i[b] > 0 && (!i.locs[b].box || !i.locs[b].pallet));
+function itemRow(i, right){
+  return `<div class="list-item" data-code="${esc(i.barcode)}"><div class="l"><b>${esc(i.desc || i.barcode)}</b><small>${esc(i.barcode)}</small></div><div class="r">${right}</div></div>`;
+}
+function renderAllLists(){
+  // pending
+  const p = items.filter(needsAssign);
+  const pc = $('#pendCount'); pc.textContent = p.length; pc.classList.toggle('hidden', !p.length);
+  $('#pendList').innerHTML = p.length ? p.map(i => itemRow(i, esc(breakdown(i)))).join('') : '<div class="hint">Nothing waiting — every counted item has its box and pallet.</div>';
+  // on hold
+  const h = items.filter(i => i.hold > 0).sort((a, b) => new Date(a.holdSince || 0) - new Date(b.holdSince || 0));
+  const late = h.filter(i => holdInfo(i)?.late).length;
+  const hc = $('#holdCount'); hc.textContent = h.length; hc.classList.toggle('hidden', !h.length); hc.classList.toggle('late', late > 0);
+  $('#holdList').innerHTML = h.length ? h.map(i => {
+    const hi = holdInfo(i);
+    return `<div class="list-item" data-code="${esc(i.barcode)}"><div class="l"><b>${esc(i.desc || i.barcode)}</b><small>${esc(i.holdNote.slice(0, 90))}</small></div>
+      <div class="r"><span class="badge ${hi?.late ? 'b-late' : 'b-Short'}">${i.hold} on hold</span><br>${hi ? esc(hi.text) : ''}</div></div>`;
+  }).join('') : '<div class="hint">Nothing on hold.</div>';
+  // boxes
+  const boxes = {};
+  items.forEach(i => BUCKETS.forEach(b => {
+    const bx = i.locs[b].box; if (!(i[b] > 0) || !bx) return;
+    const k = bkey(bx), o = boxes[k] ||= {name:bx, cls:new Set(), titles:0, units:0, pallets:new Set()};
+    o.cls.add(BNAME[b]); o.titles++; o.units += i[b]; if (i.locs[b].pallet) o.pallets.add(i.locs[b].pallet);
+  }));
+  closedBoxes.forEach(k => { boxes[k] ||= {name:k, cls:new Set(), titles:0, units:0, pallets:new Set()}; });
+  const bl = Object.entries(boxes).sort((a, b) => (closedBoxes.has(a[0]) - closedBoxes.has(b[0])) || a[0].localeCompare(b[0], undefined, {numeric:true}));
+  $('#boxList').innerHTML = bl.length ? bl.map(([k, o]) => {
+    const done = closedBoxes.has(k);
+    return `<div class="boxrow"><div><b>${esc(o.name)} <span class="badge ${done ? 'b-closed' : 'b-open'}">${done ? 'Complete' : 'Open'}</span></b>
+      <small>${[...o.cls].join(' / ') || 'empty'} · ${o.titles} title${o.titles === 1 ? '' : 's'} · ${o.units} unit${o.units === 1 ? '' : 's'}${o.pallets.size ? ' · Pallet ' + [...o.pallets].map(esc).join(', ') : ''}</small></div>
+      <button class="btn sm ${done ? 'ghost' : ''}" data-box="${esc(o.name)}" data-closed="${done ? 0 : 1}">${done ? 'Reopen' : '✓ Complete'}</button></div>`;
+  }).join('') : '<div class="hint">No boxes yet — they appear once you assign box numbers.</div>';
+  // summary
+  $('#sSell').textContent = items.reduce((s, i) => s + sellable(i), 0);
+  $('#sHold').textContent = items.reduce((s, i) => s + i.hold, 0);
+  $('#sDmg').textContent = items.reduce((s, i) => s + i.dmg, 0);
+  $('#sLate').textContent = late;
+  renderAll();
+}
+function renderAll(){
+  const q = $('#search').value.trim().toLowerCase();
+  const rows = items.filter(i => {
+    if (q && !(i.barcode.toLowerCase().includes(q) || (i.desc || '').toLowerCase().includes(q))) return false;
+    if (filter === 'open') return i.received === null;
+    if (filter === 'hold') return i.hold > 0;
+    if (filter === 'dmg') return i.dmg > 0;
+    return !filter || i.status === filter;
+  });
+  $('#allList').innerHTML = rows.length ? rows.map(i => {
+    if (i.received === null) return itemRow(i, `<span class="badge b-none">Not received</span><br>expected ${i.expected}`);
+    const locs = BUCKETS.filter(b => i[b] > 0 && i.locs[b].box).map(b => `${BNAME[b]}: ${esc(i.locs[b].box)} / ${esc(i.locs[b].pallet)}`).join('<br>');
+    return itemRow(i, `<span class="badge b-${esc(i.status)}">${esc(i.status)}</span> ${i.received} / ${i.expected}<br>${esc(breakdown(i))}${locs ? '<br>' + locs : ''}`);
+  }).join('') : '<div class="hint">No items.</div>';
+}
+function openFromList(code){
+  const it = items.find(i => i.barcode === code); if (!it) return;
+  setTab('receive'); cur = it;
+  if (needsAssign(it)){ renderAssign(it); showStep(2); } else openItem(it);
+}
+
+/* ---------------- resolve On Hold ---------------- */
+let resolving = null;
+function openResolve(code){
+  const it = items.find(i => i.barcode === code); if (!it) return;
+  resolving = it;
+  $('#rTitle').textContent = it.desc || it.barcode;
+  const hi = holdInfo(it);
+  $('#rInfo').textContent = `${it.hold} on hold · ${hi ? hi.text : ''}${it.holdNote ? ' · “' + it.holdNote + '”' : ''}`;
+  $('#rUnits').value = it.hold; $('#rUnits').max = it.hold;
+  $('#rBy').value = ''; $('#rClose').checked = false;
+  document.querySelector('input[name=rTo][value=vg]').checked = true;
+  fillResolveLoc();
+  $('#resolveDlg').showModal();
+}
+function fillResolveLoc(){
+  const to = document.querySelector('input[name=rTo]:checked').value;
+  const l = (resolving.locs[to].box ? resolving.locs[to] : lastLoc[to]) || {box:'', pallet:''};
+  $('#rBox').value = l.box; $('#rPallet').value = l.pallet;
+}
+async function saveResolve(){
+  const to = document.querySelector('input[name=rTo]:checked').value;
+  const p = {barcode: resolving.barcode, qty: Number($('#rUnits').value), to, approvedBy: $('#rBy').value.trim(), box: $('#rBox').value.trim(), pallet: $('#rPallet').value.trim()};
+  if (!Number.isInteger(p.qty) || p.qty < 1 || p.qty > resolving.hold){ toast('Units must be between 1 and ' + resolving.hold, true); return; }
+  if (!p.approvedBy){ toast('Enter who at YVENTURES approved this', true); return; }
+  if (!p.box || !p.pallet){ toast('Enter the new box and pallet number', true); return; }
+  const err = segConflict(items, resolving, {[to]: {box: p.box, pallet: p.pallet}}) || boxOpenError(closedBoxes, p.box, resolving.locs[to].box);
+  if (err){ toast(err, true); return; }
+  p.closeBox = $('#rClose').checked;
+  const b = $('#rSave'); busy(b, true);
+  try{
+    await api('resolve', p);
+    lastLoc[to] = {box: p.box, pallet: p.pallet}; store.set('lastLoc2', lastLoc);
+    $('#resolveDlg').close(); toast(`${p.qty} unit${p.qty === 1 ? '' : 's'} reclassified as ${BNAME[to]}`);
+    refreshList(true);
+  }catch(e){ toast(e.message, true); }
+  busy(b, false);
+}
+
+/* ---------------- tabs ---------------- */
+function setTab(t){
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  ['receive','hold','pending','boxes','all'].forEach(n => $('#tab-' + n).classList.toggle('hidden', n !== t));
+  if (t !== 'receive') stopCam(); else $('#scan').focus();
+  if (t !== 'receive') refreshList(true);
+}
+
+/* ---------------- camera ---------------- */
+let scanner = null, scanning = false;
+async function startCam(){
+  if (scanning){ stopCam(); return; }
+  if (typeof Html5Qrcode === 'undefined'){ toast('Camera scanner library did not load — check internet', true); return; }
+  $('#cam').classList.add('on');
+  scanner = new Html5Qrcode('cam', {useBarCodeDetectorIfSupported: true, verbose: false});
+  try{
+    await scanner.start({facingMode:'environment'}, {fps:10, qrbox:{width:260, height:140}},
+      txt => { if (navigator.vibrate) navigator.vibrate(60); stopCam(); $('#scan').value = txt; lookup(txt); }, () => {});
+    scanning = true; $('#camBtn').textContent = '✕ Close camera';
+  }catch(e){
+    scanner = null; $('#cam').classList.remove('on');
+    toast(location.protocol === 'http:' && location.hostname !== 'localhost' ? 'Camera needs https:// — host the page on https' : 'Camera blocked or unavailable', true);
+  }
+}
+async function stopCam(){
+  if (!scanner) return;
+  const s = scanner; scanner = null; scanning = false;
+  try{ await s.stop(); s.clear(); }catch{}
+  $('#cam').classList.remove('on'); $('#camBtn').textContent = '📷 Scan with camera';
+}
+
+/* ---------------- settings ---------------- */
+function openSettings(){ $('#cfgUrl').value = cfg.url; $('#cfgToken').value = cfg.token; $('#cfgUser').value = cfg.user; $('#settings').showModal(); }
+const readCfgForm = () => ({url: $('#cfgUrl').value.trim(), token: $('#cfgToken').value, user: $('#cfgUser').value.trim()});
+
+/* ---------------- wiring ---------------- */
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+$('#scanForm').onsubmit = e => { e.preventDefault(); lookup($('#scan').value); };
+$('#camBtn').onclick = startCam;
+document.querySelectorAll('.crow').forEach(row => {
+  const i = row.querySelector('input');
+  i.oninput = updateVerdict;
+  i.onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); saveQty(); } };
+  row.querySelector('.plus').onclick = () => { i.value = (Number(i.value) || 0) + 1; updateVerdict(); };
+  row.querySelector('.minus').onclick = () => { i.value = Math.max(0, (Number(i.value) || 0) - 1); updateVerdict(); };
+});
+$('#addPhoto').onclick = () => $('#photoIn').click();
+$('#photoIn').onchange = async e => {
+  for (const f of [...e.target.files]){
+    if (photos.length >= 8){ toast('Max 8 photos', true); break; }
+    try{ photos.push(await resizeToJpeg(f)); }catch(err){ toast(err.message, true); }
+  }
+  e.target.value = ''; renderThumbs();
+};
+$('#thumbs').onclick = e => { const b = e.target.closest('button'); if (b){ photos.splice(Number(b.dataset.i), 1); renderThumbs(); } };
+$('#saveQty').onclick = saveQty;
+$('#cancelItem').onclick = resetReceive;
+$('#saveAssign').onclick = saveAssign;
+$('#skipAssign').onclick = skipAssign;
+$('#assignRows').onkeydown = e => {
+  if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+  e.preventDefault();
+  const all = [...document.querySelectorAll('#assignRows input[type=text]')], i = all.indexOf(e.target);
+  if (i < all.length - 1) all[i + 1].focus(); else saveAssign();
+};
+$('#nextItem').onclick = resetReceive;
+$('#holdList').onclick = e => { const r = e.target.closest('.list-item'); if (r) openResolve(r.dataset.code); };
+$('#pendList').onclick = $('#allList').onclick = e => { const r = e.target.closest('.list-item'); if (r) openFromList(r.dataset.code); };
+$('#boxList').onclick = async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const closing = b.dataset.closed === '1';
+  if (closing && !confirm(`Mark box ${b.dataset.box} complete? Nothing more can be added to it.`)) return;
+  busy(b, true);
+  try{ await api('box', {box: b.dataset.box, closed: closing}); toast(closing ? `Box ${b.dataset.box} marked complete` : `Box ${b.dataset.box} reopened`); await refreshList(true); }
+  catch(err){ toast(err.message, true); busy(b, false); }
+};
+$('#search').oninput = renderAll;
+$('#filters').onclick = e => { const b = e.target.closest('button'); if (!b) return; filter = b.dataset.f; document.querySelectorAll('#filters button').forEach(x => x.classList.toggle('on', x === b)); renderAll(); };
+$('#refresh').onclick = () => refreshList(false);
+document.querySelectorAll('input[name=rTo]').forEach(r => r.onchange = fillResolveLoc);
+$('#rSave').onclick = saveResolve;
+$('#rCancel').onclick = () => $('#resolveDlg').close();
+$('#openGuide').onclick = () => $('#guideDlg').showModal();
+$('#guideClose').onclick = () => $('#guideDlg').close();
+$('#openSettings').onclick = openSettings;
+$('#saveCfg').onclick = () => {
+  const c = readCfgForm(); Object.assign(cfg, c);
+  store.set('url', c.url); store.set('token', c.token); store.set('user', c.user);
+  $('#settings').close(); renderMode(); resetReceive(); refreshList(true); toast(isLive() ? 'Saved — connected to your sheet' : 'Demo mode');
+};
+$('#testConn').onclick = async () => {
+  const saved = {...cfg}; Object.assign(cfg, readCfgForm());
+  try{ const r = await api('ping'); toast('✓ ' + (r.message || 'Connected')); }catch(e){ toast(e.message, true); }
+  Object.assign(cfg, saved);
+};
+$('#resetDemo').onclick = () => { if (confirm('Reset demo data to the sample books?')){ store.set('demo2', JSON.parse(JSON.stringify(DEMO_SEED))); refreshList(true); toast('Demo data reset'); } };
+
+renderMode();
+refreshList(true);
+$('#scan').focus();
+if (!cfg.user && isLive()) setTimeout(openSettings, 300);
+</script>
+</body>
+</html>
