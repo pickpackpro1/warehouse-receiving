@@ -322,8 +322,9 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
     </div>
     <div class="card">
       <input id="search" type="text" placeholder="Search barcode or title…" autocomplete="off">
+      <div class="hint" style="margin-top:6px">Shows books you have scanned or counted. For any other book, scan it on the Receive tab.</div>
       <div class="filters" id="filters">
-        <button data-f="" class="on">All</button><button data-f="open">Not received</button><button data-f="Short">Short</button>
+        <button data-f="" class="on">All</button><button data-f="Short">Short</button>
         <button data-f="Over">Over</button><button data-f="hold">On hold</button><button data-f="dmg">Damaged</button>
       </div>
       <div id="allList"></div>
@@ -385,6 +386,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
   <div class="field"><label for="cfgUser">Your name (optional, saved with each receipt)</label>
     <input id="cfgUser" type="text" autocomplete="off"></div>
   <div class="hint">A URL is already built in. Paste a different one to change it.</div>
+  <div class="hint" id="timing"></div>
   <div class="row" style="margin-top:14px">
     <button class="btn ghost" id="testConn" type="button">Test connection</button>
     <button class="btn" id="saveCfg" type="button" style="margin-left:auto">Save</button>
@@ -445,14 +447,19 @@ const palletsOf = (i, b) => [...new Set((i.locs[b] || []).map(x => x.pallet).fil
 
 let pending = 0, busyT = null;
 const BUSY_TEXT = {lookup:'Searching the sheet…', add:'Adding to the sheet…', receive:'Saving to the sheet…', assign:'Saving to the sheet…', resolve:'Saving to the sheet…', box:'Saving to the sheet…', ping:'Testing connection…'};
+const lookCache = new Map();          // barcode → {t, item}: re-scanning the same book within 30 s is instant
+let lastTiming = null;
+const WRITES = ['receive','assign','resolve','box','add'];
 async function api(action, p = {}){
   const full = BUSY_TEXT[action];
+  const t0 = performance.now();
+  if (WRITES.includes(action)) lookCache.clear();
   pending++;
   if (full){
     $('#busyText').textContent = full;
     clearTimeout(busyT); busyT = setTimeout(() => $('#busy').classList.add('on'), 120);   // skip the flash on instant calls
   } else $('#topbar').classList.add('on');
-  try{ return await apiRaw(action, p); }
+  try{ const r = await apiRaw(action, p); lastTiming = {action, total: Math.round(performance.now() - t0), server: r.ms}; if (WRITES.includes(action)) lookCache.clear(); return r; }
   finally{
     pending--;
     if (full){ clearTimeout(busyT); $('#busy').classList.remove('on'); }
@@ -511,9 +518,12 @@ function resetReceive(){ cur = null; photos = []; renderThumbs(); $('#work').cla
 async function lookup(code){
   code = String(code).trim();
   if (!code) return;
+  const key = code.toUpperCase(), hit = lookCache.get(key);
+  if (hit && Date.now() - hit.t < 30000){ openItem(JSON.parse(JSON.stringify(hit.item))); return; }
   try{
     const r = await api('lookup', {barcode: code});
     if (!r.found){ openAdd(code); return; }
+    lookCache.set(key, {t: Date.now(), item: JSON.parse(JSON.stringify(r.item))});
     openItem(r.item);
   }catch(e){ toast(e.message, true); }
 }
@@ -537,7 +547,7 @@ async function saveAdd(){
   try{
     const r = await api('add', {barcode: $('#addCode').textContent, desc, expected: Number(q)});
     toast(r.existed ? 'That barcode was already in the sheet' : 'Added to the sheet');
-    openItem(r.item); refreshList(true);
+    openItem(r.item); scheduleRefresh();
   }catch(e){ toast(e.message, true); }
   busy(b, false);
 }
@@ -623,7 +633,7 @@ async function saveQty(){
       else toast('Saved (email reports are switched off in Code.gs)');
     }
     renderAssign(cur, r.workRow); showStep(2);
-    refreshList(true);
+    scheduleRefresh();
   }catch(e){ toast(e.message, true); }
   busy(b, false);
 }
@@ -724,7 +734,7 @@ async function saveAssign(){
     $('#doneTitle').textContent = short ? 'Saved (some units not placed)' : 'Saved';
     $('#doneSub').innerHTML = esc(r.item.desc) + '<br>' + Object.keys(locs).map(b => `${BNAME[b]}: ` + locs[b].map(x => `${x.qty} → Box ${esc(x.box)} / Pallet ${esc(x.pallet)}`).join(', ')).join('<br>');
     if (closeBoxes.length) $('#doneSub').innerHTML += '<br><b>Box ' + [...new Set(closeBoxes)].map(esc).join(', ') + ' marked complete ✓</b>';
-    showStep(3); refreshList(true);
+    showStep(3); scheduleRefresh();
   }catch(e){ toast(e.message, true); }
   busy(btn, false);
 }
@@ -757,6 +767,8 @@ function renderThumbs(){
 
 /* ---------------- lists ---------------- */
 let items = [], filter = '';
+let refreshT = null;   // list refresh waits until the sheet is idle, so it never slows down the next scan
+function scheduleRefresh(){ clearTimeout(refreshT); refreshT = setTimeout(() => { if (pending > 0) scheduleRefresh(); else refreshList(true); }, 5000); }
 async function refreshList(silent){
   try{ const r = await api('list'); items = r.items; closedBoxes = new Set(r.closed || []); renderAllLists(); if (!silent) toast('Refreshed'); }
   catch(e){ if (!silent) toast(e.message, true); }
@@ -861,7 +873,7 @@ async function saveResolve(){
     await api('resolve', p);
     lastLoc[to] = {box: p.box, pallet: p.pallet}; store.set('lastLoc2', lastLoc);
     $('#resolveDlg').close(); toast(`${p.qty} unit${p.qty === 1 ? '' : 's'} reclassified as ${BNAME[to]}`);
-    refreshList(true);
+    scheduleRefresh();
   }catch(e){ toast(e.message, true); }
   busy(b, false);
 }
@@ -898,7 +910,8 @@ async function stopCam(){
 }
 
 /* ---------------- settings ---------------- */
-function openSettings(){ $('#cfgUrl').value = cfg.url; $('#cfgToken').value = cfg.token; $('#cfgUser').value = cfg.user; $('#settings').showModal(); }
+function openSettings(){
+  $('#timing').textContent = lastTiming ? `Last sheet call (${lastTiming.action}): ${(lastTiming.total / 1000).toFixed(1)} s total` + (lastTiming.server != null ? `, ${(lastTiming.server / 1000).toFixed(1)} s inside the sheet script` : '') : ''; $('#cfgUrl').value = cfg.url; $('#cfgToken').value = cfg.token; $('#cfgUser').value = cfg.user; $('#settings').showModal(); }
 const readCfgForm = () => ({url: $('#cfgUrl').value.trim() || DEFAULT_URL, token: $('#cfgToken').value, user: $('#cfgUser').value.trim()});
 
 /* ---------------- wiring ---------------- */
