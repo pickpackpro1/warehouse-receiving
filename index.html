@@ -23,6 +23,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:16p
 h1{font-size:19px;margin:0}
 .pill{font-size:12px;font-weight:600;padding:3px 9px;border-radius:99px;background:var(--hold-bg);color:var(--hold);margin-left:8px}
 .pill.live{background:var(--ln-bg);color:var(--ln)}
+.pill.off{background:var(--dmg-bg);color:var(--dmg)}
 .icon-btn{background:none;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:8px 12px;font-size:14px;cursor:pointer}
 nav{display:flex;gap:6px;margin:8px 0 14px}
 nav button{flex:1;padding:10px 2px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--muted);font:600 12px inherit;cursor:pointer;white-space:nowrap}
@@ -120,7 +121,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
 <body>
 <div class="wrap">
   <header>
-    <div style="display:flex;align-items:center"><h1>Warehouse Receiving</h1><span id="mode" class="pill">Demo</span></div>
+    <div style="display:flex;align-items:center"><h1>Warehouse Receiving</h1><span id="mode" class="pill">Connecting…</span></div>
     <div class="row"><button class="icon-btn" id="openGuide">📖 Guide</button><button class="icon-btn" id="openSettings">Settings</button></div>
   </header>
 
@@ -289,12 +290,11 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
     <input id="cfgToken" type="password" autocomplete="off"></div>
   <div class="field"><label for="cfgUser">Your name (saved with each receipt)</label>
     <input id="cfgUser" type="text" autocomplete="off"></div>
-  <div class="hint">A URL is already built in. Paste a different one to change it, or clear the field to use Demo mode (sample books, this browser only).</div>
+  <div class="hint">A URL is already built in. Paste a different one to change it.</div>
   <div class="row" style="margin-top:14px">
     <button class="btn ghost" id="testConn" type="button">Test connection</button>
     <button class="btn" id="saveCfg" type="button" style="margin-left:auto">Save</button>
   </div>
-  <div class="row" style="margin-top:8px"><button class="btn ghost block" id="resetDemo" type="button">Reset demo data</button></div>
 </dialog>
 
 <div id="toast"></div>
@@ -309,9 +309,7 @@ const store = {
   set(k, v){ try { localStorage.setItem('wr_' + k, JSON.stringify(v)); } catch {} },
 };
 const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbzG39MLv8MU7GFGP28iHRMLfiS3O5011xGh9cnCMvD0ZTobxyLuDoq5yaXkZGur_1iU/exec';
-const savedUrl = store.get('url', null);   // null = never changed → use the built-in URL; '' = deliberately demo mode
-const cfg = { url: savedUrl === null ? DEFAULT_URL : savedUrl, token: store.get('token', ''), user: store.get('user', '') };
-const isLive = () => !!cfg.url;
+const cfg = { url: store.get('url', '') || DEFAULT_URL, token: store.get('token', ''), user: store.get('user', '') };   // empty/unset → built-in URL
 
 const HOLD_DAYS = 14;               // keep in sync with Code.gs
 const REQUIRE_HOLD_PHOTO = false;    // keep in sync with Code.gs
@@ -322,30 +320,12 @@ const sellable = i => i.ln + i.vg;
 const bkey = s => String(s).trim().toUpperCase();
 let closedBoxes = new Set();   // upper-cased box numbers marked complete
 
-/* ---------------- backend (live sheet or in-browser demo) ---------------- */
-const mk = (barcode, desc, expected) => ({barcode, desc, expected, ln:0, vg:0, hold:0, dmg:0, received:null, status:'',
-  locs:{ln:{box:'',pallet:''},vg:{box:'',pallet:''},hold:{box:'',pallet:''},dmg:{box:'',pallet:''}}, holdSince:'', holdNote:'', at:'', by:''});
-const DEMO_SEED = [
-  mk('9780000000011', 'Pocketbook of Clinical IR (Thieme)', 40),
-  mk('9780000000028', 'Effective Police Supervision Study Guide, 9th ed.', 25),
-  mk('9780000000035', 'Maritime Economics, 3rd ed.', 18),
-  mk('9780000000042', 'Aesthetic Facial Anatomy Essentials', 12),
-  mk('9780000000059', 'Diagnostic Neuropathology Atlas', 8),
-  mk('9780000000066', 'Introduction to Criminal Justice', 60),
-];
-const demoDb = {
-  load(){ let d = store.get('demo2', null); if(!d){ d = JSON.parse(JSON.stringify(DEMO_SEED)); store.set('demo2', d); } return d; },
-  save(d){ store.set('demo2', d); },
-  closed(){ return store.get('closed2', []); },
-  setClosed(a){ store.set('closed2', [...new Set(a)]); },
-};
-
+/* ---------------- backend (Google Sheet via Apps Script) ---------------- */
 function boxOpenError(closed, box, current){
   if (current && bkey(current) === bkey(box)) return null;
   return closed.has(bkey(box)) ? `Box ${box} is marked complete — nothing more can be added. Use another box, or reopen it first.` : null;
 }
 
-const whole = (v, label) => { const n = Number(v === '' || v == null ? 0 : v); if (!Number.isInteger(n) || n < 0) throw new Error(label + ' must be a whole number'); return n; };
 
 /* Boxes/pallets of sellable, on-hold and damaged stock must never mix. Mirrors Code.gs. */
 function segConflict(allItems, cur, newLocs){
@@ -370,80 +350,17 @@ function segConflict(allItems, cur, newLocs){
   return null;
 }
 
-async function demoApi(action, p){
-  await new Promise(r => setTimeout(r, 120));
-  const db = demoDb.load();
-  const it = db.find(i => i.barcode === String(p.barcode || '').trim());
-  if (action === 'ping') return {ok:true, message:'Demo mode'};
-  if (action === 'list') return {ok:true, items:db, closed:demoDb.closed()};
-  if (action === 'box'){
-    const k = bkey(p.box || ''); if (!k) throw new Error('Box number missing');
-    const c = new Set(demoDb.closed()); p.closed ? c.add(k) : c.delete(k); demoDb.setClosed([...c]);
-    return {ok:true, closed:[...c]};
-  }
-  if (action === 'lookup') return it ? {ok:true, found:true, item:it} : {ok:true, found:false};
-  if (!it) throw new Error('Barcode not found');
-  if (action === 'receive'){
-    const c = {ln: whole(p.ln,'Like New'), vg: whole(p.vg,'Very Good'), hold: whole(p.hold,'On Hold')};
-    const note = String(p.holdNote || '').trim();
-    if (c.hold > 0){
-      if (REQUIRE_HOLD_PHOTO && !(p.photos || []).length) throw new Error('On Hold units need at least one photo as evidence');
-    }
-    const prevHold = it.hold;
-    Object.assign(it, c);
-    ['ln','vg','hold'].forEach(b => { if (!c[b]) it.locs[b] = {box:'', pallet:''}; });
-    it.received = c.ln + c.vg + c.hold + it.dmg;
-    it.status = it.received === it.expected ? 'Received' : it.received < it.expected ? 'Short' : 'Over';
-    it.at = new Date().toISOString(); it.by = p.user || '';
-    if (c.hold > 0){ if (!it.holdSince || !prevHold) it.holdSince = new Date().toISOString(); it.holdNote = note; }
-    else { it.holdSince = ''; it.holdNote = ''; }
-    demoDb.save(db);
-    return {ok:true, item:it, emailed: c.hold > 0, demoEmail: c.hold > 0};
-  }
-  if (action === 'assign'){
-    if (it.received === null) throw new Error('Receive this item first');
-    const locs = p.locs || {};
-    for (const b of Object.keys(locs)){
-      if (!(it[b] > 0)) throw new Error('No ' + BNAME[b] + ' units on this line');
-      if (!String(locs[b].box || '').trim() || !String(locs[b].pallet || '').trim()) throw new Error(BNAME[b] + ': box and pallet are both required');
-    }
-    const err = segConflict(db, it, locs); if (err) throw new Error(err);
-    const cl = new Set(demoDb.closed());
-    for (const b of Object.keys(locs)){ const e = boxOpenError(cl, locs[b].box, it.locs[b].box); if (e) throw new Error(e); }
-    Object.keys(locs).forEach(b => it.locs[b] = {box: locs[b].box.trim(), pallet: locs[b].pallet.trim()});
-    (p.closeBoxes || []).forEach(x => cl.add(bkey(x))); demoDb.setClosed([...cl]);
-    demoDb.save(db);
-    return {ok:true, item:it};
-  }
-  if (action === 'resolve'){
-    const to = p.to, qty = whole(p.qty, 'Units');
-    if (to !== 'vg' && to !== 'dmg') throw new Error('Reclassify as Very Good or Damaged');
-    if (!String(p.approvedBy || '').trim()) throw new Error('Enter who at YVENTURES approved this');
-    if (!String(p.box || '').trim() || !String(p.pallet || '').trim()) throw new Error('Box and pallet are required for the new location');
-    if (qty < 1 || qty > it.hold) throw new Error('Units must be between 1 and ' + it.hold);
-    const locs = {[to]: {box:p.box.trim(), pallet:p.pallet.trim()}};
-    const err = segConflict(db, it, locs); if (err) throw new Error(err);
-    const cl = new Set(demoDb.closed()); const e2 = boxOpenError(cl, p.box, it.locs[to].box); if (e2) throw new Error(e2);
-    if (p.closeBox){ cl.add(bkey(p.box)); demoDb.setClosed([...cl]); }
-    it.hold -= qty; it[to] += qty; it.locs[to] = locs[to];
-    if (!it.hold){ it.holdSince = ''; it.holdNote = ''; it.locs.hold = {box:'', pallet:''}; }
-    demoDb.save(db);
-    return {ok:true, item:it};
-  }
-  throw new Error('Unknown action');
-}
-
 async function api(action, p = {}){
-  if (!isLive()) return demoApi(action, p);
   const body = {action, token: cfg.token, user: cfg.user, ...p};
   const write = ['receive','assign','resolve','box'].includes(action);
   let res;
   try{
     if (write) res = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body), redirect:'follow'}); // text/plain avoids CORS preflight
     else res = await fetch(cfg.url + '?' + new URLSearchParams(body), {redirect:'follow'});
-  }catch{ throw new Error('Could not reach the sheet — check your internet and the web app URL'); }
+  }catch{ setConn(false); throw new Error('Could not reach the sheet — check your internet and the web app URL'); }
   let data;
-  try { data = await res.json(); } catch { throw new Error('Sheet did not answer correctly — check the web app URL and that access is set to "Anyone"'); }
+  try { data = await res.json(); } catch { setConn(false); throw new Error('Sheet did not answer correctly — check the web app URL and that access is set to "Anyone"'); }
+  setConn(true);
   if (!data.ok) throw new Error(data.error || 'Sheet error');
   return data;
 }
@@ -454,7 +371,7 @@ function toast(msg, err){
   const t = $('#toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
   clearTimeout(toastT); toastT = setTimeout(() => t.className = '', err ? 4500 : 2800);
 }
-function renderMode(){ const m = $('#mode'); m.textContent = isLive() ? 'Live' : 'Demo'; m.className = 'pill' + (isLive() ? ' live' : ''); }
+function setConn(ok){ const m = $('#mode'); m.textContent = ok ? 'Live' : 'Not connected'; m.className = 'pill' + (ok ? ' live' : ' off'); }
 const busy = (btn, on) => btn.disabled = on;
 const breakdown = i => `LN ${i.ln} · VG ${i.vg} · Hold ${i.hold}` + (i.dmg ? ` · Dmg ${i.dmg}` : '');
 
@@ -536,8 +453,7 @@ async function saveQty(){
     const r = await api('receive', {barcode: cur.barcode, ...c, holdNote: note, photos: photos.map(p => ({name:p.name, data:p.data}))});
     cur = r.item;
     if (c.hold > 0){
-      if (r.demoEmail) toast('Demo: On Hold report would be emailed to YVENTURES');
-      else if (r.emailed) toast('✓ On Hold report emailed to YVENTURES');
+      if (r.emailed) toast('✓ On Hold report emailed to YVENTURES');
       else if (r.emailError) toast('Saved, but the report email FAILED: ' + r.emailError + ' — send it manually', true);
       else toast('Saved (email reports are switched off in Code.gs)');
     }
@@ -752,7 +668,7 @@ async function stopCam(){
 
 /* ---------------- settings ---------------- */
 function openSettings(){ $('#cfgUrl').value = cfg.url; $('#cfgToken').value = cfg.token; $('#cfgUser').value = cfg.user; $('#settings').showModal(); }
-const readCfgForm = () => ({url: $('#cfgUrl').value.trim(), token: $('#cfgToken').value, user: $('#cfgUser').value.trim()});
+const readCfgForm = () => ({url: $('#cfgUrl').value.trim() || DEFAULT_URL, token: $('#cfgToken').value, user: $('#cfgUser').value.trim()});
 
 /* ---------------- wiring ---------------- */
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
@@ -807,20 +723,18 @@ $('#openSettings').onclick = openSettings;
 $('#useDefault').onclick = () => { $('#cfgUrl').value = DEFAULT_URL; };
 $('#saveCfg').onclick = () => {
   const c = readCfgForm(); Object.assign(cfg, c);
-  store.set('url', c.url); store.set('token', c.token); store.set('user', c.user);
-  $('#settings').close(); renderMode(); resetReceive(); refreshList(true); toast(isLive() ? 'Saved — connected to your sheet' : 'Demo mode');
+  c.url = c.url || DEFAULT_URL; cfg.url = c.url; store.set('url', c.url); store.set('token', c.token); store.set('user', c.user);
+  $('#settings').close(); resetReceive(); refreshList(true); toast('Saved');
 };
 $('#testConn').onclick = async () => {
   const saved = {...cfg}; Object.assign(cfg, readCfgForm());
   try{ const r = await api('ping'); toast('✓ ' + (r.message || 'Connected')); }catch(e){ toast(e.message, true); }
   Object.assign(cfg, saved);
 };
-$('#resetDemo').onclick = () => { if (confirm('Reset demo data to the sample books?')){ store.set('demo2', JSON.parse(JSON.stringify(DEMO_SEED))); refreshList(true); toast('Demo data reset'); } };
 
-renderMode();
 refreshList(true);
 $('#scan').focus();
-if (!cfg.user && isLive()) setTimeout(openSettings, 300);
+if (!cfg.user) setTimeout(openSettings, 300);
 </script>
 </body>
 </html>
