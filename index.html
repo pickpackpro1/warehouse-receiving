@@ -200,7 +200,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
         <div id="assignRows"></div>
         <button class="btn block" id="saveAssign">Save box &amp; pallet</button>
         <button class="btn ghost block" id="skipAssign" style="margin-top:8px">Skip — assign later</button>
-        <div class="hint">Like New / Very Good (sellable), On Hold and Damaged must each use their own boxes and pallets — they can't be mixed. Last used numbers are pre-filled.</div>
+        <div class="hint">Like New / Very Good (sellable), On Hold and Damaged must each go in their own boxes — a box can't mix them. Several boxes can share one pallet. Last used numbers are pre-filled.</div>
       </div>
 
       <div class="card done hidden" id="stepDone">
@@ -338,13 +338,12 @@ function boxOpenError(closed, box, current){
 }
 
 
-/* Boxes/pallets of sellable, on-hold and damaged stock must never mix. Mirrors Code.gs. */
+/* A BOX never holds a mix of sellable, on-hold and damaged stock (pallets may be shared). Mirrors Code.gs. */
 function segConflict(allItems, cur, newLocs){
   const key = s => String(s).trim().toUpperCase();
   const check = (cls, bucket, box, pallet, ob, op, ocls, where) => {
     if (ocls === cls) return null;
     if (ob && key(ob) === key(box)) return `Box ${box} is already used for ${where} — ${BNAME[bucket]} stock must be kept separate`;
-    if (op && key(op) === key(pallet)) return `Pallet ${pallet} is already used for ${where} — ${BNAME[bucket]} stock must be kept separate`;
     return null;
   };
   for (const b of Object.keys(newLocs)){
