@@ -332,6 +332,16 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
   </section>
 </div>
 
+<!-- already counted: add / next row / replace -->
+<dialog id="modeDlg">
+  <h2 style="margin-top:0">This barcode already has a count</h2>
+  <div class="hint" id="mdInfo" style="margin:-4px 0 14px;font-size:14px"></div>
+  <button class="btn block" id="mdAdd" type="button">➕ Add to existing count<br><small id="mdAddSub" style="font-weight:500"></small></button>
+  <button class="btn ghost block" id="mdNext" type="button" style="margin-top:8px"></button>
+  <button class="btn ghost block" id="mdReplace" type="button" style="margin-top:8px;color:var(--dmg)">♻ Replace existing counts<br><small style="font-weight:500">only to correct a mistake</small></button>
+  <button class="btn ghost block" id="mdCancel" type="button" style="margin-top:8px">Cancel</button>
+</dialog>
+
 <!-- resolve On Hold -->
 <dialog id="resolveDlg">
   <h2 style="margin-top:0" id="rTitle">Resolve On Hold</h2>
@@ -537,7 +547,7 @@ function renderRows(it){
   if (rows.length < 2 && !rel.length){ box.classList.add('hidden'); box.innerHTML = ''; return; }
   let h = '';
   if (rows.length > 1) h += `<div class="rb-h">⚠ This barcode is on ${rows.length} rows in the sheet — expected is the total (${it.expected})</div>` +
-    rows.map(r => `<div class="rb-r"><b>Row ${r.row}</b><span>${esc(r.info)}</span><em>qty ${r.expected}</em></div>`).join('');
+    rows.map(r => `<div class="rb-r"><b>Row ${r.row}</b><span>${esc(r.info)}${r.counted ? `<br><b style="color:var(--ln)">✓ counted: LN ${r.ln} · VG ${r.vg} · Hold ${r.hold}${r.dmg ? ' · Dmg ' + r.dmg : ''}</b>` : (r.row === it.nextRow ? '<br><b style="color:var(--brand)">← next free row</b>' : '')}</span><em>qty ${r.expected}</em></div>`).join('');
   if (rel.length) h += `<div class="rb-h" style="margin-top:8px">Same ISBN, different barcode (NOT in the total):</div>` +
     rel.map(r => `<div class="rb-r"><b>Row ${r.row}</b><span>${esc(r.barcode)} · ${esc(r.info)}</span><em>qty ${r.expected}</em></div>`).join('');
   box.innerHTML = h; box.classList.remove('hidden');
@@ -573,6 +583,25 @@ function updateVerdict(){
   else { v.className = 'verdict v-over'; v.textContent = `Over by ${grand - e} — will be saved as Over. ${base}`; }
 }
 
+function askMode(newC){
+  return new Promise(res => {
+    const dlg = $('#modeDlg');
+    $('#mdInfo').innerHTML = `Already counted: <b>${esc(breakdown(cur))}</b><br>You are now entering: <b>LN ${newC.ln} · VG ${newC.vg} · Hold ${newC.hold}</b>`;
+    $('#mdAddSub').textContent = `→ becomes LN ${cur.ln + newC.ln} · VG ${cur.vg + newC.vg} · Hold ${cur.hold + newC.hold}`;
+    const nx = $('#mdNext');
+    nx.disabled = !cur.nextRow;
+    nx.innerHTML = cur.nextRow ? `📄 Use next row (sheet row ${cur.nextRow})<br><small style="font-weight:500">kept separate, with its own box</small>` : `📄 Use next row<br><small style="font-weight:500">no free rows left for this barcode</small>`;
+    let done = false;
+    const fin = v => { if (done) return; done = true; dlg.close(); res(v); };
+    $('#mdAdd').onclick = () => fin('add');
+    nx.onclick = () => fin('next');
+    $('#mdReplace').onclick = () => { if (confirm(`Replace ALL existing counts for this barcode (${breakdown(cur)})? Only do this to fix a mistake.`)) fin('replace'); };
+    $('#mdCancel').onclick = () => fin(null);
+    dlg.oncancel = () => fin(null);
+    dlg.showModal();
+  });
+}
+
 async function saveQty(){
   const typed = ['ln','vg','hold'].filter(b => inp(b).value !== '');
   if (!typed.length){ toast('Enter how many books are in each condition', true); return; }
@@ -582,27 +611,29 @@ async function saveQty(){
   if (c.hold > 0){
     if (REQUIRE_HOLD_PHOTO && !photos.length){ toast('Add at least one photo of the On Hold books', true); return; }
   }
-  if (cur.received !== null && !confirm('This item was already counted (' + breakdown(cur) + '). Replace those counts?')) return;
+  let mode = 'next';
+  if (cur.received !== null){ mode = await askMode(c); if (!mode) return; }
   const b = $('#saveQty'); busy(b, true);
   try{
-    const r = await api('receive', {barcode: cur.barcode, ...c, holdNote: note, photos: photos.map(p => ({name:p.name, data:p.data}))});
-    cur = r.item;
+    const r = await api('receive', {barcode: cur.barcode, ...c, mode, holdNote: note, photos: photos.map(p => ({name:p.name, data:p.data}))});
+    cur = r.item; cur.workRow = r.workRow;
     if (c.hold > 0){
       if (r.emailed) toast('✓ On Hold report emailed to YVENTURES');
       else if (r.emailError) toast('Saved, but the report email FAILED: ' + r.emailError + ' — send it manually', true);
       else toast('Saved (email reports are switched off in Code.gs)');
     }
-    renderAssign(cur); showStep(2);
+    renderAssign(cur, r.workRow); showStep(2);
     refreshList(true);
   }catch(e){ toast(e.message, true); }
   busy(b, false);
 }
 
-function recap(it){
+function recap(it, rowNo){
   const diff = it.received - it.expected;
   const rl = $('#recapLine');
   rl.className = 'verdict ' + (diff === 0 ? 'v-ok' : diff < 0 ? 'v-short' : 'v-over');
-  rl.textContent = `${it.desc} — ${it.received} of ${it.expected}` + (diff < 0 ? ` (short ${-diff})` : diff > 0 ? ` (over ${diff})` : ' ✓') + ` · ${breakdown(it)}`;
+  rl.textContent = `${it.desc} — ${it.received} of ${it.expected}` + (diff < 0 ? ` (short ${-diff})` : diff > 0 ? ` (over ${diff})` : ' ✓') + ` · ${breakdown(it)}` +
+    ((it.rows || []).length > 1 ? ` · placing boxes for sheet row ${rowNo}` : '');
 }
 
 function plRow(b, d, canRemove){
@@ -623,14 +654,21 @@ function updateRem(card){
   const rows = card.querySelectorAll('.pl');
   rows.forEach(r => r.querySelector('.plx').disabled = rows.length < 2);
 }
-function renderAssign(it){
-  recap(it);
-  $('#assignRows').innerHTML = BUCKETS.filter(b => it[b] > 0).map(b => {
+function workRowOf(it, rowNo){
+  const counted = (it.rows || []).filter(x => x.counted);
+  const no = rowNo || (it.unplacedRows || [])[0] || (counted[counted.length - 1] || {}).row;
+  return (it.rows || []).find(x => x.row === no) || it;
+}
+function renderAssign(it, rowNo){
+  const rd = workRowOf(it, rowNo);
+  it.workRow = rd.row;
+  recap(it, rd.row);
+  $('#assignRows').innerHTML = BUCKETS.filter(b => rd[b] > 0).map(b => {
     const sub = b === 'hold' ? 'segregated hold area' : b === 'dmg' ? 'segregated damaged area' : 'FBM sellable';
-    const existing = it.locs[b] || [];
-    const rows = existing.length ? existing : [{...(lastLoc[b] || {box:'', pallet:''}), qty: it[b]}];
-    return `<div class="bk ${b}" data-b="${b}" data-total="${it[b]}">
-      <div class="bh">${BNAME[b]} · ${it[b]} unit${it[b] === 1 ? '' : 's'} <small>— ${sub}</small></div>
+    const existing = (rd.locs && rd.locs[b]) || [];
+    const rows = existing.length ? existing : [{...(lastLoc[b] || {box:'', pallet:''}), qty: rd[b]}];
+    return `<div class="bk ${b}" data-b="${b}" data-total="${rd[b]}">
+      <div class="bh">${BNAME[b]} · ${rd[b]} unit${rd[b] === 1 ? '' : 's'} <small>— ${sub}</small></div>
       <div class="rem"></div>
       <div class="pls">${rows.map(d => plRow(b, d, rows.length > 1)).join('')}</div>
       <button type="button" class="btn ghost sm addbox">＋ Add another box for this book</button></div>`;
@@ -676,12 +714,12 @@ async function saveAssign(){
     locs[b] = list;
   }
   let err = segConflict(items, cur, locs);
-  for (const b of Object.keys(locs)){ for (const pl of locs[b]){ if (err) break; err = boxOpenError(closedBoxes, pl.box, (cur.locs[b] || []).map(x => x.box)); } }
+  for (const b of Object.keys(locs)){ for (const pl of locs[b]){ if (err) break; err = boxOpenError(closedBoxes, pl.box, ((workRowOf(cur, cur.workRow).locs || {})[b] || []).map(x => x.box)); } }
   if (err){ toast(err, true); return; }
   if (short > 0 && !confirm(`${short} unit${short === 1 ? '' : 's'} are not placed in any box yet. Save anyway? They will stay in the Assign tab.`)) return;
   const btn = $('#saveAssign'); busy(btn, true);
   try{
-    const r = await api('assign', {barcode: cur.barcode, locs, closeBoxes});
+    const r = await api('assign', {barcode: cur.barcode, row: cur.workRow, locs, closeBoxes});
     Object.keys(locs).forEach(b => { if (locs[b][0]) lastLoc[b] = {box: locs[b][0].box, pallet: locs[b][0].pallet}; }); store.set('lastLoc2', lastLoc);
     $('#doneTitle').textContent = short ? 'Saved (some units not placed)' : 'Saved';
     $('#doneSub').innerHTML = esc(r.item.desc) + '<br>' + Object.keys(locs).map(b => `${BNAME[b]}: ` + locs[b].map(x => `${x.qty} → Box ${esc(x.box)} / Pallet ${esc(x.pallet)}`).join(', ')).join('<br>');
@@ -723,7 +761,7 @@ async function refreshList(silent){
   try{ const r = await api('list'); items = r.items; closedBoxes = new Set(r.closed || []); renderAllLists(); if (!silent) toast('Refreshed'); }
   catch(e){ if (!silent) toast(e.message, true); }
 }
-const needsAssign = i => BUCKETS.some(b => i[b] > 0 && placedQty(i, b) < i[b]);
+const needsAssign = i => (i.unplacedRows || []).length > 0;
 function itemRow(i, right){
   return `<div class="list-item" data-code="${esc(i.barcode)}"><div class="l"><b>${esc(i.desc || i.barcode)}</b><small>${esc(i.barcode)}${(i.rows || []).length > 1 ? ' · ' + i.rows.length + ' rows' : ''}</small></div><div class="r">${right}</div></div>`;
 }
