@@ -160,6 +160,17 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
     <div id="work" class="hidden">
       <div class="steps"><i id="s1" class="on"></i><i id="s2"></i></div>
 
+      <!-- step 0: barcode not in the sheet yet -->
+      <div class="card hidden" id="stepAdd">
+        <h2 style="margin:0 0 4px">New book — not in the sheet yet</h2>
+        <div class="code" id="addCode" style="font:13px ui-monospace,Menlo,monospace;color:var(--muted)"></div>
+        <div class="hint" style="margin:8px 0 14px">This barcode will be added to the sheet as a new row. Type the book name and the quantity, then continue as normal.</div>
+        <div class="field"><label for="addName">Book name</label><input id="addName" type="text" autocomplete="off" placeholder="Title of the book"></div>
+        <div class="field"><label for="addQty">Quantity</label><input id="addQty" type="number" inputmode="numeric" min="0" step="1" placeholder="0"></div>
+        <button class="btn block" id="addSave">Add to sheet &amp; continue</button>
+        <button class="btn ghost block" id="addCancel" style="margin-top:8px">Cancel</button>
+      </div>
+
       <!-- step 1: inspect & count -->
       <div class="card item" id="stepCount">
         <h2 id="iDesc"></h2>
@@ -361,7 +372,7 @@ function segConflict(allItems, cur, newLocs){
 }
 
 let pending = 0, busyT = null;
-const BUSY_TEXT = {lookup:'Searching the sheet…', receive:'Saving to the sheet…', assign:'Saving to the sheet…', resolve:'Saving to the sheet…', box:'Saving to the sheet…', ping:'Testing connection…'};
+const BUSY_TEXT = {lookup:'Searching the sheet…', add:'Adding to the sheet…', receive:'Saving to the sheet…', assign:'Saving to the sheet…', resolve:'Saving to the sheet…', box:'Saving to the sheet…', ping:'Testing connection…'};
 async function api(action, p = {}){
   const full = BUSY_TEXT[action];
   pending++;
@@ -379,7 +390,7 @@ async function api(action, p = {}){
 }
 async function apiRaw(action, p = {}){
   const body = {action, token: cfg.token, user: cfg.user, ...p};
-  const write = ['receive','assign','resolve','box'].includes(action);
+  const write = ['receive','assign','resolve','box','add'].includes(action);
   let res;
   try{
     if (write) res = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body), redirect:'follow'}); // text/plain avoids CORS preflight
@@ -416,11 +427,12 @@ let photos = [];   // [{name, data(base64), url}]
 
 function showStep(n){
   $('#work').classList.remove('hidden');
+  $('#stepAdd').classList.toggle('hidden', n !== 0);
   $('#stepCount').classList.toggle('hidden', n !== 1);
   $('#stepAssign').classList.toggle('hidden', n !== 2);
   $('#stepDone').classList.toggle('hidden', n !== 3);
   $('#s2').className = n >= 2 ? 'on' : '';
-  $('.steps').classList.toggle('hidden', n === 3);
+  $('.steps').classList.toggle('hidden', n === 3 || n === 0);
 }
 function resetReceive(){ cur = null; photos = []; renderThumbs(); $('#work').classList.add('hidden'); $('#scan').value = ''; stopCam(); $('#scan').focus(); }
 
@@ -429,7 +441,7 @@ async function lookup(code){
   if (!code) return;
   try{
     const r = await api('lookup', {barcode: code});
-    if (!r.found){ toast('Barcode not in sheet: ' + code, true); $('#scan').select(); return; }
+    if (!r.found){ openAdd(code); return; }
     openItem(r.item);
   }catch(e){ toast(e.message, true); }
 }
@@ -438,6 +450,25 @@ const counts = () => ({ln: num('ln'), vg: num('vg'), hold: num('hold')});
 const inp = b => document.querySelector(`.crow[data-b=${b}] input`);
 const num = b => { const v = inp(b).value; return v === '' ? 0 : Number(v); };
 
+function openAdd(code){
+  cur = null; stopCam();
+  $('#addCode').textContent = code;
+  $('#addName').value = ''; $('#addQty').value = '';
+  showStep(0);
+  $('#addName').focus();
+}
+async function saveAdd(){
+  const desc = $('#addName').value.trim(), q = $('#addQty').value;
+  if (!desc){ toast('Type the book name', true); $('#addName').focus(); return; }
+  if (q === '' || !Number.isInteger(Number(q)) || Number(q) < 0){ toast('Type the quantity (whole number)', true); $('#addQty').focus(); return; }
+  const b = $('#addSave'); busy(b, true);
+  try{
+    const r = await api('add', {barcode: $('#addCode').textContent, desc, expected: Number(q)});
+    toast(r.existed ? 'That barcode was already in the sheet' : 'Added to the sheet');
+    openItem(r.item); refreshList(true);
+  }catch(e){ toast(e.message, true); }
+  busy(b, false);
+}
 function openItem(it){
   cur = it; photos = []; renderThumbs();
   $('#iDesc').textContent = it.desc || '(no description)';
@@ -718,6 +749,10 @@ $('#photoIn').onchange = async e => {
 };
 $('#thumbs').onclick = e => { const b = e.target.closest('button'); if (b){ photos.splice(Number(b.dataset.i), 1); renderThumbs(); } };
 $('#saveQty').onclick = saveQty;
+$('#addSave').onclick = saveAdd;
+$('#addCancel').onclick = resetReceive;
+$('#addQty').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); saveAdd(); } };
+$('#addName').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); $('#addQty').focus(); } };
 $('#cancelItem').onclick = resetReceive;
 $('#saveAssign').onclick = saveAssign;
 $('#skipAssign').onclick = skipAssign;
