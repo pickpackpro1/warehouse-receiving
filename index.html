@@ -125,9 +125,55 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
 .radio input{display:none}
 .radio input:checked + span{font-weight:800}
 .radio label:has(input:checked){border-color:var(--brand);background:var(--bg)}
+
+/* ---------- startup splash ---------- */
+#splash{position:fixed;inset:0;z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;
+  background:radial-gradient(120% 90% at 50% 38%,#16224a 0%,#0a0f22 52%,#05070f 100%);color:#fff;overflow:hidden;
+  transition:opacity .7s cubic-bezier(.4,0,.2,1),transform .7s cubic-bezier(.4,0,.2,1),visibility 0s .7s}
+#splash.out{opacity:0;transform:scale(1.06);visibility:hidden;pointer-events:none}
+#splash::before,#splash::after{content:"";position:absolute;border-radius:50%;filter:blur(70px);opacity:.55;animation:float 7s ease-in-out infinite alternate}
+#splash::before{width:420px;height:420px;background:#2457f5;top:-120px;left:-100px}
+#splash::after{width:360px;height:360px;background:#7a3cff;bottom:-120px;right:-80px;animation-delay:-3s;opacity:.4}
+@keyframes float{to{transform:translate(40px,30px) scale(1.15)}}
+#splash .mark{position:relative;width:min(70vw,260px);filter:drop-shadow(0 0 22px rgba(91,132,255,.45));animation:markIn .9s cubic-bezier(.2,.8,.2,1) both}
+@keyframes markIn{from{opacity:0;transform:translateY(14px) scale(.92)}to{opacity:1;transform:none}}
+#splash svg{display:block;width:100%;height:auto;overflow:visible}
+#splash .bar{transform-box:fill-box;transform-origin:center;fill:#33406b;animation:barIn .55s cubic-bezier(.2,.9,.3,1.2) both,barLit .35s ease-out both}
+@keyframes barIn{from{transform:scaleY(0);opacity:0}to{transform:scaleY(1);opacity:1}}
+@keyframes barLit{from{fill:#33406b}to{fill:#ffffff}}
+#splash .beam{animation:beamMove 1.1s cubic-bezier(.45,0,.2,1) 1s both}
+@keyframes beamMove{0%{transform:translateX(0);opacity:0}10%{opacity:1}90%{opacity:1}100%{transform:translateX(var(--w));opacity:0}}
+#splash .title{font-weight:800;font-size:clamp(22px,6vw,30px);letter-spacing:.02em;text-align:center;line-height:1.15}
+#splash .title span{display:inline-block;opacity:0;filter:blur(8px);transform:translateY(10px);animation:wordIn .7s cubic-bezier(.2,.8,.2,1) both}
+@keyframes wordIn{to{opacity:1;filter:none;transform:none}}
+#splash .tag{font-size:11px;font-weight:700;letter-spacing:.38em;color:#8da2ff;text-transform:uppercase;opacity:0;animation:wordIn .8s ease 2.05s both}
+#splash .load{position:relative;width:min(56vw,200px);height:3px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden;opacity:0;animation:wordIn .5s ease 1.9s both}
+#splash .load i{position:absolute;inset:0;width:40%;border-radius:3px;background:linear-gradient(90deg,transparent,#8da2ff,#fff,#8da2ff,transparent);animation:slide 1.1s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){#splash,#splash *{animation:none!important;transition-duration:.01s!important}#splash .title span,#splash .tag,#splash .load{opacity:1;filter:none;transform:none}#splash .bar{fill:#fff}}
 </style>
 </head>
 <body>
+<div id="splash" aria-hidden="true">
+  <div class="mark"><svg id="splashSvg" viewBox="0 0 230 90"></svg></div>
+  <div class="title"><span style="animation-delay:1.7s">Warehouse</span> <span style="animation-delay:1.85s">Receiving</span></div>
+  <div class="tag">Pick Pack Pro</div>
+  <div class="load"><i></i></div>
+</div>
+<script>
+(function(){
+  var w=[3,1,2,1,4,1,2,3,1,2,1,3,2,1,4,1,2,1,3,1,2,3,1,2,1,4,1,2], x=0, out='', total=0, i;
+  for(i=0;i<w.length;i++) total+=w[i]*3.2+3;
+  var k=230/total;
+  for(i=0;i<w.length;i++){
+    var bw=w[i]*3.2*k, h=(i%5===2)?62:(i%7===3?70:78), y=(90-h)/2;
+    out+='<rect class="bar" x="'+x.toFixed(1)+'" y="'+y+'" width="'+bw.toFixed(1)+'" height="'+h+'" rx="1" style="animation-delay:'+(0.15+i*0.025).toFixed(3)+'s,'+(1.0+i*0.036).toFixed(3)+'s"/>';
+    x+=bw+3*k;
+  }
+  out+='<g class="beam" style="--w:230px"><rect x="-1.5" y="-4" width="3" height="98" fill="#9db4ff"/><rect x="-14" y="-4" width="28" height="98" fill="url(#bg)" opacity=".55"/></g>';
+  out+='<defs><linearGradient id="bg" x1="0" x2="1"><stop offset="0" stop-color="#5b84ff" stop-opacity="0"/><stop offset=".5" stop-color="#9db4ff" stop-opacity=".9"/><stop offset="1" stop-color="#5b84ff" stop-opacity="0"/></linearGradient></defs>';
+  document.getElementById('splashSvg').innerHTML=out;
+})();
+</script>
 <div class="wrap">
   <header>
     <div style="display:flex;align-items:center"><h1>Warehouse Receiving</h1><span id="mode" class="pill">Connecting…</span></div>
@@ -794,7 +840,14 @@ $('#testConn').onclick = async () => {
   Object.assign(cfg, saved);
 };
 
-refreshList(true);
+const dataReady = refreshList(true);
+(function(){   // startup splash: stays for the animation (min) and until the first sheet read finishes (max 6s)
+  const t0 = performance.now(), reduce = matchMedia('(prefers-reduced-motion: reduce)').matches, MIN = reduce ? 0 : 2700;
+  const sp = $('#splash'); let gone = false;
+  const hide = () => { if (gone) return; gone = true; sp.classList.add('out'); setTimeout(() => sp.remove(), 900); };
+  sp.onclick = () => { if (performance.now() - t0 > 900) hide(); };   // tap to skip
+  Promise.race([dataReady, new Promise(r => setTimeout(r, 6000))]).then(() => setTimeout(hide, Math.max(0, MIN - (performance.now() - t0))));
+})();
 $('#scan').focus();
 </script>
 </body>
