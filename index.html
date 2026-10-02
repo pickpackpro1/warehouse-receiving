@@ -556,13 +556,14 @@ function setMode(m, keepCamera){
   if (scanning && !keepCamera){ stopCam().then(startCam); }   // camera reads different barcode types per option
   $('#scan').focus();
 }
-const looksLikeIsbn = v => /^(97[89][\d-]{10,14}|\d{9}[\dXx])$/.test(String(v).replace(/\s/g, ''));
+const looksLikeIsbn = v => !!toIsbn13(v);
 
 /* ---------------- ISBN database of the world (Open Library, then Google Books) ---------------- */
 const isbnClean = v => String(v || '').replace(/[\s-]/g, '').replace(/_[A-Za-z0-9]+$/, '').toUpperCase();
 function toIsbn13(v){
   v = isbnClean(v);
   if (/^\d{9}[\dX]$/.test(v)){ const d = '978' + v.slice(0, 9); let s = 0; for (let i = 0; i < 12; i++) s += Number(d[i]) * (i % 2 ? 3 : 1); return d + ((10 - s % 10) % 10); }
+  if (/^97[89]\d{9}$/.test(v)){ let s = 0; for (let i = 0; i < 12; i++) s += Number(v[i]) * (i % 2 ? 3 : 1); return v + ((10 - s % 10) % 10); }   // scanner dropped the check digit
   return /^97[89]\d{10}$/.test(v) ? v : '';
 }
 const isbnCache = store.get('isbnc', {});
