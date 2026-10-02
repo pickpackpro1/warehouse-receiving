@@ -469,6 +469,7 @@ function boxMap(i){
 }
 const condText = o => BUCKETS.filter(b => o[b] > 0).map(b => `${o[b]} ${ABBR[b]}`).join(' + ');
 const boxTotal = o => o.ln + o.vg + o.hold + o.dmg;
+const palletSummary = bm => { const p = [...new Set(bm.map(o => o.pallet).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), undefined, {numeric:true})); return p.length ? `${p.length === 1 ? 'Only in pallet' : 'In ' + p.length + ' pallets'}: <b>${p.map(esc).join(', ')}</b>` : ''; };
 const placedQty = (i, b) => (i.locs[b] || []).reduce((s, x) => s + x.qty, 0);
 const fmtPlaced = (i, b) => (i.locs[b] || []).map(x => `${esc(x.box)} (${x.qty})`).join(', ');
 const palletsOf = (i, b) => [...new Set((i.locs[b] || []).map(x => x.pallet).filter(Boolean))].map(esc).join(', ');
@@ -617,7 +618,7 @@ function openItem(it){
   renderRows(it);
   const bm = boxMap(it), inBoxes = bm.reduce((s, o) => s + boxTotal(o), 0);
   const where = bm.length ? '📦 <b>Where it is now</b><br>' + bm.map(o => `Pallet ${esc(o.pallet)} · Box ${esc(o.box)}: <b>${esc(condText(o))}</b>`).join('<br>') +
-    `<br>Total in boxes: <b>${inBoxes}</b>` + (it.received !== null ? ` of ${it.received} counted` : '') : '';
+    `<br>Total in boxes: <b>${inBoxes}</b>` + (it.received !== null ? ` of ${it.received} counted` : '') + `<br>${palletSummary(bm)}` : '';
   $('#whereBox').innerHTML = where;
   $('#whereBox').classList.toggle('hidden', !where);
   $('#iRec').textContent = it.received === null ? '–' : it.received;
@@ -897,7 +898,7 @@ function renderAll(){
   $('#allList').innerHTML = rows.length ? rows.map(i => {
     if (i.received === null) return itemRow(i, `<span class="badge b-none">Not received</span><br>expected ${i.expected}`);
     const bm = boxMap(i), inBoxes = bm.reduce((s, o) => s + boxTotal(o), 0), counted = i.ln + i.vg + i.hold + i.dmg;
-    const locs = bm.map(o => `P${esc(o.pallet)} · Box ${esc(o.box)}: ${esc(condText(o))}`).join('<br>') + (bm.length ? `<br><b>${inBoxes} in boxes</b>` : '') + (inBoxes < counted ? ` · ${counted - inBoxes} not placed` : '');
+    const locs = bm.map(o => `P${esc(o.pallet)} · Box ${esc(o.box)}: ${esc(condText(o))}`).join('<br>') + (bm.length ? `<br><b>${inBoxes} in boxes</b> · ${palletSummary(bm)}` : '') + (inBoxes < counted ? ` · ${counted - inBoxes} not placed` : '');
     return itemRow(i, `<span class="badge b-${esc(i.status)}">${esc(i.status)}</span> ${i.received} / ${i.expected}<br>${esc(breakdown(i))}${locs ? '<br>' + locs : ''}`);
   }).join('') : '<div class="hint">No items.</div>';
 }
