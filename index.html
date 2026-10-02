@@ -434,27 +434,30 @@ const BNAME = {ln:'Like New', vg:'Very Good', hold:'On Hold', dmg:'Damaged'};
 const BCLASS = {ln:'sell', vg:'sell', hold:'hold', dmg:'dmg'};
 const sellable = i => i.ln + i.vg;
 const bkey = s => String(s).trim().toUpperCase();
-let closedBoxes = new Set();   // upper-cased box numbers marked complete
+/* A box is its PALLET and its NUMBER together: box 1 on pallet 1 and box 1 on pallet 2 are different boxes. */
+const ukey = (pallet, box) => bkey(pallet) + '|' + bkey(box);
+let closedBoxes = new Set();   // "PALLET|BOX" keys marked complete ("*|BOX" = an older entry that applies to every pallet)
+const isClosedBox = (pallet, box) => closedBoxes.has(ukey(pallet, box)) || closedBoxes.has('*|' + bkey(box));
 
 /* ---------------- backend (Google Sheet via Apps Script) ---------------- */
-function boxOpenError(closed, box, currentBoxes){
-  if ([].concat(currentBoxes || []).some(c => bkey(c) === bkey(box))) return null;
-  return closed.has(bkey(box)) ? `Box ${box} is marked complete — nothing more can be added. Use another box, or reopen it first.` : null;
+function boxOpenError(pallet, box, currentBoxes){          // currentBoxes = the [{box, pallet}] this line already sits in
+  if ([].concat(currentBoxes || []).some(c => ukey(c.pallet, c.box) === ukey(pallet, box))) return null;
+  return isClosedBox(pallet, box) ? `Pallet ${pallet}, box ${box} is marked complete — nothing more can be added. Use another box, or reopen it first.` : null;
 }
 
 /* A BOX never holds a mix of sellable, on-hold and damaged stock (pallets may be shared). Mirrors Code.gs.
    newLocs = { bucket: [{box, pallet, qty}, ...] } — the full list for each bucket being saved. */
 function segConflict(allItems, cur, newLocs){
   for (const b of Object.keys(newLocs)) for (const pl of newLocs[b]){
-    const k = bkey(pl.box), cls = BCLASS[b];
+    const k = ukey(pl.pallet, pl.box), cls = BCLASS[b];
     for (const it of allItems) for (const o of BUCKETS){
       if (it.barcode === cur.barcode && newLocs[o]) continue;     // being replaced
-      if (BCLASS[o] !== cls && (it.locs[o] || []).some(x => bkey(x.box) === k))
-        return `Box ${pl.box} is already used for ${BNAME[o]} stock — ${BNAME[b]} stock must be kept separate`;
+      if (BCLASS[o] !== cls && (it.locs[o] || []).some(x => ukey(x.pallet, x.box) === k))
+        return `Pallet ${pl.pallet}, box ${pl.box} is already used for ${BNAME[o]} stock — ${BNAME[b]} stock must be kept separate`;
     }
     for (const o of Object.keys(newLocs))
-      if (o !== b && BCLASS[o] !== cls && newLocs[o].some(x => bkey(x.box) === k))
-        return `Box ${pl.box} is used for both ${BNAME[b]} and ${BNAME[o]} on this item — use separate boxes`;
+      if (o !== b && BCLASS[o] !== cls && newLocs[o].some(x => ukey(x.pallet, x.box) === k))
+        return `Pallet ${pl.pallet}, box ${pl.box} is used for both ${BNAME[b]} and ${BNAME[o]} on this item — use separate boxes`;
   }
   return null;
 }
@@ -464,7 +467,7 @@ const ABBR = {ln:'LN', vg:'VG', hold:'Hold', dmg:'Dmg'};
 function boxMap(i){
   const m = {}, order = [];
   BUCKETS.forEach(b => (i.locs[b] || []).forEach(pl => {
-    const k = bkey(pl.box);
+    const k = ukey(pl.pallet, pl.box);
     if (!m[k]){ m[k] = {box: pl.box, pallet: pl.pallet || '', ln:0, vg:0, hold:0, dmg:0}; order.push(k); }
     m[k][b] += pl.qty;
   }));
@@ -843,10 +846,10 @@ async function saveAssign(){
       if (!box || !pallet){ toast(`${BNAME[b]}: every box needs a box number and a pallet number`, true); return; }
       const qty = qv === '' && rows.length === 1 ? total : Number(qv);
       if (!Number.isInteger(qty) || qty < 1){ toast(`${BNAME[b]}: box ${box} needs a quantity of 1 or more`, true); return; }
-      const dup = list.find(x => bkey(x.box) === bkey(box));
-      if (dup){ if (bkey(dup.pallet) !== bkey(pallet)){ toast(`${BNAME[b]}: box ${box} is listed on two different pallets`, true); return; } dup.qty += qty; }
+      const dup = list.find(x => ukey(x.pallet, x.box) === ukey(pallet, box));
+      if (dup){ dup.qty += qty; }
       else list.push({box, pallet, qty});
-      if (r.querySelector('.plcl').checked) closeBoxes.push(box);
+      if (r.querySelector('.plcl').checked) closeBoxes.push({box, pallet});
     }
     const sum = list.reduce((s, x) => s + x.qty, 0);
     if (sum > total){ toast(`${BNAME[b]}: ${sum} units placed but only ${total} counted`, true); return; }
@@ -854,7 +857,7 @@ async function saveAssign(){
     locs[b] = list;
   }
   let err = segConflict(items, cur, locs);
-  for (const b of Object.keys(locs)){ for (const pl of locs[b]){ if (err) break; err = boxOpenError(closedBoxes, pl.box, ((workRowOf(cur, cur.workRow).locs || {})[b] || []).map(x => x.box)); } }
+  for (const b of Object.keys(locs)){ for (const pl of locs[b]){ if (err) break; err = boxOpenError(pl.pallet, pl.box, (workRowOf(cur, cur.workRow).locs || {})[b] || []); } }
   if (err){ toast(err, true); return; }
   if (short > 0 && !confirm(`${short} unit${short === 1 ? '' : 's'} are not placed in any box yet. Save anyway? They will stay in the Assign tab.`)) return;
   const btn = $('#saveAssign'); busy(btn, true);
@@ -863,7 +866,7 @@ async function saveAssign(){
     Object.keys(locs).forEach(b => { if (locs[b][0]) lastLoc[b] = {box: locs[b][0].box, pallet: locs[b][0].pallet}; }); store.set('lastLoc2', lastLoc);
     $('#doneTitle').textContent = short ? 'Saved (some units not placed)' : 'Saved';
     $('#doneSub').innerHTML = esc(r.item.desc) + '<br>' + Object.keys(locs).map(b => `${BNAME[b]}: ` + locs[b].map(x => `${x.qty} → Box ${esc(x.box)} / Pallet ${esc(x.pallet)}`).join(', ')).join('<br>');
-    if (closeBoxes.length) $('#doneSub').innerHTML += '<br><b>Box ' + [...new Set(closeBoxes)].map(esc).join(', ') + ' marked complete ✓</b>';
+    if (closeBoxes.length) $('#doneSub').innerHTML += '<br><b>' + [...new Set(closeBoxes.map(c => `Pallet ${c.pallet} · Box ${c.box}`))].map(esc).join(', ') + ' marked complete ✓</b>';
     showStep(3); scheduleRefresh(); fireView();
   }catch(e){ toast(e.message, true); }
   busy(btn, false);
@@ -943,20 +946,21 @@ function renderAllLists(){
   const boxes = {};
   items.forEach(i => BUCKETS.forEach(b => {
     (i.locs[b] || []).forEach(pl => {
-      const k = bkey(pl.box), o = boxes[k] ||= {name:pl.box, cls:new Set(), titles:0, units:0, pallets:new Set(), books:{}};
+      const k = ukey(pl.pallet, pl.box), o = boxes[k] ||= {name:pl.box, pallet:pl.pallet || '', cls:new Set(), titles:0, units:0, pallets:new Set(), books:{}};
       const bk = o.books[i.barcode] ||= (o.titles++, {desc: i.desc || i.barcode, ln:0, vg:0, hold:0, dmg:0});
       bk[b] += pl.qty;
       o.cls.add(BNAME[b]); o.units += pl.qty; if (pl.pallet) o.pallets.add(pl.pallet);
     });
   }));
-  closedBoxes.forEach(k => { boxes[k] ||= {name:k, cls:new Set(), titles:0, units:0, pallets:new Set(), books:{}}; });
-  const bl = Object.entries(boxes).sort((a, b) => (closedBoxes.has(a[0]) - closedBoxes.has(b[0])) || a[0].localeCompare(b[0], undefined, {numeric:true}));
+  closedBoxes.forEach(k => { if (boxes[k]) return; const [pl, bx] = k.split('|'); boxes[k] = {name:bx, pallet:pl === '*' ? '' : pl, any:pl === '*', cls:new Set(), titles:0, units:0, pallets:new Set(), books:{}}; });
+  const isDone = (k, o) => closedBoxes.has(k) || (!o.any && closedBoxes.has('*|' + bkey(o.name)));
+  const bl = Object.entries(boxes).sort((a, b) => (isDone(a[0], a[1]) - isDone(b[0], b[1])) || String(a[1].pallet).localeCompare(String(b[1].pallet), undefined, {numeric:true}) || String(a[1].name).localeCompare(String(b[1].name), undefined, {numeric:true}));
   $('#boxList').innerHTML = bl.length ? bl.map(([k, o]) => {
-    const done = closedBoxes.has(k);
-    return `<div class="boxrow"><div><b>${esc(o.name)} <span class="badge ${done ? 'b-closed' : 'b-open'}">${done ? 'Complete' : 'Open'}</span></b>
-      <small>${[...o.cls].join(' / ') || 'empty'} · ${o.titles} title${o.titles === 1 ? '' : 's'} · ${o.units} unit${o.units === 1 ? '' : 's'}${o.pallets.size ? ' · Pallet ' + [...o.pallets].map(esc).join(', ') : ''}</small>
+    const done = isDone(k, o);
+    return `<div class="boxrow"><div><b>${o.any ? 'Box ' + esc(o.name) + ' (all pallets)' : 'Pallet ' + esc(o.pallet) + ' · Box ' + esc(o.name)} <span class="badge ${done ? 'b-closed' : 'b-open'}">${done ? 'Complete' : 'Open'}</span></b>
+      <small>${[...o.cls].join(' / ') || 'empty'} · ${o.titles} title${o.titles === 1 ? '' : 's'} · ${o.units} unit${o.units === 1 ? '' : 's'}</small>
       ${Object.values(o.books).map(bk => `<small style="display:block;margin-top:2px">• ${esc(bk.desc)} — <b>${esc(condText(bk))}</b></small>`).join('')}</div>
-      <button class="btn sm ${done ? 'ghost' : ''}" data-box="${esc(o.name)}" data-closed="${done ? 0 : 1}">${done ? 'Reopen' : '✓ Complete'}</button></div>`;
+      <button class="btn sm ${done ? 'ghost' : ''}" data-box="${esc(o.name)}" data-pallet="${esc(o.pallet)}" data-closed="${done ? 0 : 1}">${done ? 'Reopen' : '✓ Complete'}</button></div>`;
   }).join('') : '<div class="hint">No boxes yet — they appear once you assign box numbers.</div>';
   // summary
   $('#sSell').textContent = items.reduce((s, i) => s + sellable(i), 0);
@@ -1016,7 +1020,7 @@ async function saveResolve(){
   if (!p.approvedBy){ toast('Enter who at YVENTURES approved this', true); return; }
   if (!p.box || !p.pallet){ toast('Enter the new box and pallet number', true); return; }
   const toList = [...(resolving.locs[to] || []), {box: p.box, pallet: p.pallet, qty: p.qty}];
-  const err = segConflict(items, resolving, {[to]: toList}) || boxOpenError(closedBoxes, p.box, (resolving.locs[to] || []).map(x => x.box));
+  const err = segConflict(items, resolving, {[to]: toList}) || boxOpenError(p.pallet, p.box, resolving.locs[to] || []);
   if (!$('#rFromWrap').classList.contains('hidden')) p.fromBox = $('#rFrom').value;
   if (err){ toast(err, true); return; }
   p.closeBox = $('#rClose').checked;
@@ -1127,9 +1131,10 @@ $('#pendList').onclick = $('#allList').onclick = e => { const r = e.target.close
 $('#boxList').onclick = async e => {
   const b = e.target.closest('button'); if (!b) return;
   const closing = b.dataset.closed === '1';
-  if (closing && !confirm(`Mark box ${b.dataset.box} complete? Nothing more can be added to it.`)) return;
+  const label = (b.dataset.pallet ? `pallet ${b.dataset.pallet}, ` : '') + `box ${b.dataset.box}`;
+  if (closing && !confirm(`Mark ${label} complete? Nothing more can be added to it.`)) return;
   busy(b, true);
-  try{ await api('box', {box: b.dataset.box, closed: closing}); toast(closing ? `Box ${b.dataset.box} marked complete` : `Box ${b.dataset.box} reopened`); fireView(); await refreshList(true); }
+  try{ await api('box', {box: b.dataset.box, pallet: b.dataset.pallet, closed: closing}); toast(closing ? `${label} marked complete` : `${label} reopened`); fireView(); await refreshList(true); }
   catch(err){ toast(err.message, true); busy(b, false); }
 };
 $('#search').oninput = renderAll;
