@@ -288,6 +288,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
       <!-- step 2: box + pallet -->
       <div class="card hidden" id="stepAssign">
         <div id="recapLine" class="verdict v-ok"></div>
+        <div class="field hidden" id="editRowWrap"><label for="editRow">This book is on several sheet rows — choose the row to edit</label><select id="editRow"></select></div>
         <div id="assignRows"></div>
         <button class="btn block" id="saveAssign">Save box &amp; pallet</button>
         <button class="btn ghost block" id="skipAssign" style="margin-top:8px">Skip — assign later</button>
@@ -358,6 +359,16 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
   <button class="btn ghost block" id="mdNext" type="button" style="margin-top:8px"></button>
   <button class="btn ghost block" id="mdReplace" type="button" style="margin-top:8px;color:var(--dmg)">♻ Replace existing counts<br><small style="font-weight:500">only to correct a mistake</small></button>
   <button class="btn ghost block" id="mdCancel" type="button" style="margin-top:8px">Cancel</button>
+</dialog>
+
+<!-- edit a box: change pallet / box number -->
+<dialog id="renameDlg">
+  <h2 style="margin-top:0">Edit box</h2>
+  <div class="hint" id="rnInfo" style="margin:-6px 0 12px"></div>
+  <div class="row field"><div style="flex:1"><label for="rnPallet">Pallet no.</label><input id="rnPallet" type="text" autocomplete="off"></div>
+    <div style="flex:1"><label for="rnBox">Box no.</label><input id="rnBox" type="text" autocomplete="off"></div></div>
+  <div class="hint" style="margin:-4px 0 14px">Everything in this box moves with it (and its “complete” mark). Typing an existing box merges them — only if both hold the same kind of stock.</div>
+  <div class="row"><button class="btn ghost" type="button" id="rnCancel">Cancel</button><button class="btn" type="button" id="rnSave" style="margin-left:auto">Save changes</button></div>
 </dialog>
 
 <!-- resolve On Hold -->
@@ -481,10 +492,10 @@ const fmtPlaced = (i, b) => (i.locs[b] || []).map(x => `${esc(x.box)} (${x.qty})
 const palletsOf = (i, b) => [...new Set((i.locs[b] || []).map(x => x.pallet).filter(Boolean))].map(esc).join(', ');
 
 let pending = 0, busyT = null;
-const BUSY_TEXT = {lookup:'Searching the sheet…', add:'Adding to the sheet…', receive:'Saving to the sheet…', assign:'Saving to the sheet…', resolve:'Saving to the sheet…', box:'Saving to the sheet…', ping:'Testing connection…'};
+const BUSY_TEXT = {lookup:'Searching the sheet…', renameBox:'Saving to the sheet…', add:'Adding to the sheet…', receive:'Saving to the sheet…', assign:'Saving to the sheet…', resolve:'Saving to the sheet…', box:'Saving to the sheet…', ping:'Testing connection…'};
 const lookCache = new Map();          // barcode → {t, item}: re-scanning the same book within 30 s is instant
 let lastTiming = null;
-const WRITES = ['receive','assign','resolve','box','add'];
+const WRITES = ['receive','assign','resolve','box','add','renameBox'];
 async function api(action, p = {}){
   const full = BUSY_TEXT[action];
   const t0 = performance.now();
@@ -504,7 +515,7 @@ async function api(action, p = {}){
 }
 async function apiRaw(action, p = {}){
   const body = {action, token: cfg.token, user: cfg.user, ...p};
-  const write = ['receive','assign','resolve','box','add','photos'].includes(action);
+  const write = ['receive','assign','resolve','box','add','photos','renameBox'].includes(action);
   let res;
   try{
     if (write) res = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body), redirect:'follow'}); // text/plain avoids CORS preflight
@@ -700,7 +711,7 @@ function openItem(it){
   showWorld(it);
   const bm = boxMap(it), inBoxes = bm.reduce((s, o) => s + boxTotal(o), 0);
   const where = bm.length ? '📦 <b>Where it is now</b><br>' + bm.map(o => `Pallet ${esc(o.pallet)} · Box ${esc(o.box)}: <b>${esc(condText(o))}</b>`).join('<br>') +
-    `<br>Total in boxes: <b>${inBoxes}</b>` + (it.received !== null ? ` of ${it.received} counted` : '') + `<br>${palletSummary(bm)}` : '';
+    `<br>Total in boxes: <b>${inBoxes}</b>` + (it.received !== null ? ` of ${it.received} counted` : '') + `<br>${palletSummary(bm)}<br><button type="button" class="btn ghost sm editboxes" style="margin-top:6px">✏ Edit boxes</button>` : '';
   $('#whereBox').innerHTML = where;
   $('#whereBox').classList.toggle('hidden', !where);
   $('#iRec').textContent = it.received === null ? '–' : it.received;
@@ -802,8 +813,16 @@ function workRowOf(it, rowNo){
   const no = rowNo || (it.unplacedRows || [])[0] || (counted[counted.length - 1] || {}).row;
   return (it.rows || []).find(x => x.row === no) || it;
 }
+function editableRow(it){          // the row whose boxes you most likely want to edit
+  const rows = (it.rows || []).filter(x => x.counted);
+  const withBoxes = rows.find(x => BUCKETS.some(b => (x.locs && x.locs[b] || []).length));
+  return (withBoxes || rows[0] || {}).row;
+}
 function renderAssign(it, rowNo){
   const rd = workRowOf(it, rowNo);
+  const counted = (it.rows || []).filter(x => x.counted);
+  $('#editRowWrap').classList.toggle('hidden', counted.length < 2);
+  if (counted.length > 1) $('#editRow').innerHTML = counted.map(x => `<option value="${x.row}" ${x.row === rd.row ? 'selected' : ''}>Row ${x.row} — LN ${x.ln} · VG ${x.vg} · Hold ${x.hold}</option>`).join('');
   it.workRow = rd.row;
   recap(it, rd.row);
   $('#assignRows').innerHTML = BUCKETS.filter(b => rd[b] > 0).map(b => {
@@ -947,7 +966,7 @@ function renderAllLists(){
   items.forEach(i => BUCKETS.forEach(b => {
     (i.locs[b] || []).forEach(pl => {
       const k = ukey(pl.pallet, pl.box), o = boxes[k] ||= {name:pl.box, pallet:pl.pallet || '', cls:new Set(), titles:0, units:0, pallets:new Set(), books:{}};
-      const bk = o.books[i.barcode] ||= (o.titles++, {desc: i.desc || i.barcode, ln:0, vg:0, hold:0, dmg:0});
+      const bk = o.books[i.barcode] ||= (o.titles++, {code: i.barcode, desc: i.desc || i.barcode, ln:0, vg:0, hold:0, dmg:0});
       bk[b] += pl.qty;
       o.cls.add(BNAME[b]); o.units += pl.qty; if (pl.pallet) o.pallets.add(pl.pallet);
     });
@@ -959,8 +978,8 @@ function renderAllLists(){
     const done = isDone(k, o);
     return `<div class="boxrow"><div><b>${o.any ? 'Box ' + esc(o.name) + ' (all pallets)' : 'Pallet ' + esc(o.pallet) + ' · Box ' + esc(o.name)} <span class="badge ${done ? 'b-closed' : 'b-open'}">${done ? 'Complete' : 'Open'}</span></b>
       <small>${[...o.cls].join(' / ') || 'empty'} · ${o.titles} title${o.titles === 1 ? '' : 's'} · ${o.units} unit${o.units === 1 ? '' : 's'}</small>
-      ${Object.values(o.books).map(bk => `<small style="display:block;margin-top:2px">• ${esc(bk.desc)} — <b>${esc(condText(bk))}</b></small>`).join('')}</div>
-      <button class="btn sm ${done ? 'ghost' : ''}" data-box="${esc(o.name)}" data-pallet="${esc(o.pallet)}" data-closed="${done ? 0 : 1}">${done ? 'Reopen' : '✓ Complete'}</button></div>`;
+      ${Object.values(o.books).map(bk => `<small class="bkline" data-code="${esc(bk.code)}" style="display:block;margin-top:2px;cursor:pointer">• ${esc(bk.desc)} — <b>${esc(condText(bk))}</b> ✏</small>`).join('')}</div>
+      <div style="display:flex;flex-direction:column;gap:6px"><button class="btn sm ${done ? 'ghost' : ''}" data-box="${esc(o.name)}" data-pallet="${esc(o.pallet)}" data-closed="${done ? 0 : 1}">${done ? 'Reopen' : '✓ Complete'}</button>${o.any ? '' : `<button class="btn sm ghost editbox" data-box="${esc(o.name)}" data-pallet="${esc(o.pallet)}" data-units="${o.units}" data-titles="${o.titles}">✏ Edit box</button>`}</div></div>`;
   }).join('') : '<div class="hint">No boxes yet — they appear once you assign box numbers.</div>';
   // summary
   $('#sSell').textContent = items.reduce((s, i) => s + sellable(i), 0);
@@ -1033,6 +1052,30 @@ async function saveResolve(){
   }catch(e){ toast(e.message, true); }
   busy(b, false);
 }
+
+/* ---------------- edit a box (pallet / number) ---------------- */
+let renaming = null;
+function openRename(d){
+  renaming = {pallet: d.pallet, box: d.box};
+  $('#rnInfo').textContent = `Pallet ${d.pallet}, box ${d.box} · ${d.units} unit${d.units === '1' ? '' : 's'} · ${d.titles} book${d.titles === '1' ? '' : 's'}`;
+  $('#rnPallet').value = d.pallet; $('#rnBox').value = d.box;
+  $('#renameDlg').showModal();
+}
+async function saveRename(){
+  const tp = $('#rnPallet').value.trim(), tb = $('#rnBox').value.trim();
+  if (!tp || !tb){ toast('Enter the pallet number and the box number', true); return; }
+  if (ukey(tp, tb) === ukey(renaming.pallet, renaming.box)){ $('#renameDlg').close(); return; }
+  if (isClosedBox(tp, tb)){ toast(`Pallet ${tp}, box ${tb} is marked complete — reopen it first`, true); return; }
+  const b = $('#rnSave'); busy(b, true);
+  try{
+    const r = await api('renameBox', {fromPallet: renaming.pallet, fromBox: renaming.box, toPallet: tp, toBox: tb});
+    $('#renameDlg').close(); toast(`Moved to pallet ${tp}, box ${tb}`); fireView(); await refreshList(true);
+  }catch(e){ toast(e.message, true); }
+  busy(b, false);
+}
+$('#rnSave').onclick = saveRename;
+$('#rnCancel').onclick = () => $('#renameDlg').close();
+$('#rnBox').onkeydown = $('#rnPallet').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); saveRename(); } };
 
 /* ---------------- tabs ---------------- */
 function setTab(t){
@@ -1117,6 +1160,8 @@ $('#addCancel').onclick = resetReceive;
 $('#addQty').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); saveAdd(); } };
 $('#addName').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); $('#addQty').focus(); } };
 $('#cancelItem').onclick = resetReceive;
+$('#editRow').onchange = () => renderAssign(cur, Number($('#editRow').value));
+document.addEventListener('click', e => { if (e.target.closest('.editboxes') && cur){ renderAssign(cur, editableRow(cur)); showStep(2); } });
 $('#saveAssign').onclick = saveAssign;
 $('#skipAssign').onclick = skipAssign;
 $('#assignRows').onkeydown = e => {
@@ -1129,6 +1174,10 @@ $('#nextItem').onclick = resetReceive;
 $('#holdList').onclick = e => { const r = e.target.closest('.list-item'); if (r) openResolve(r.dataset.code); };
 $('#pendList').onclick = $('#allList').onclick = e => { const r = e.target.closest('.list-item'); if (r) openFromList(r.dataset.code); };
 $('#boxList').onclick = async e => {
+  const line = e.target.closest('.bkline');
+  if (line){ const it = items.find(x => x.barcode === line.dataset.code); if (it){ setTab('receive'); cur = it; renderAssign(it, editableRow(it)); showStep(2); } return; }
+  const ed = e.target.closest('.editbox');
+  if (ed){ openRename(ed.dataset); return; }
   const b = e.target.closest('button'); if (!b) return;
   const closing = b.dataset.closed === '1';
   const label = (b.dataset.pallet ? `pallet ${b.dataset.pallet}, ` : '') + `box ${b.dataset.box}`;
