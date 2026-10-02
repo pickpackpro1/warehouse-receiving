@@ -563,8 +563,14 @@ const isbnClean = v => String(v || '').replace(/[\s-]/g, '').replace(/_[A-Za-z0-
 function toIsbn13(v){
   v = isbnClean(v);
   if (/^\d{9}[\dX]$/.test(v)){ const d = '978' + v.slice(0, 9); let s = 0; for (let i = 0; i < 12; i++) s += Number(d[i]) * (i % 2 ? 3 : 1); return d + ((10 - s % 10) % 10); }
-  if (/^97[89]\d{9}$/.test(v)){ let s = 0; for (let i = 0; i < 12; i++) s += Number(v[i]) * (i % 2 ? 3 : 1); return v + ((10 - s % 10) % 10); }   // scanner dropped the check digit
   return /^97[89]\d{10}$/.test(v) ? v : '';
+}
+/* a real ISBN-13 / EAN-13: 13 digits starting 978/979 whose last digit matches the check-digit sum — catches camera misreads */
+function isbn13Valid(v){
+  v = isbnClean(v);
+  if (!/^97[89]\d{10}$/.test(v)) return false;
+  let s = 0; for (let i = 0; i < 12; i++) s += Number(v[i]) * (i % 2 ? 3 : 1);
+  return (10 - s % 10) % 10 === Number(v[12]);
 }
 const isbnCache = store.get('isbnc', {});
 async function fetchJson(url){
@@ -616,6 +622,7 @@ async function lookup(code){
   code = String(code).trim();
   if (!code) return;
   const by = scanMode; lastScan = code;
+  if (by === 'isbn' && /^97[89]\d{10}$/.test(isbnClean(code)) && !isbn13Valid(code)){ toast(`ISBN ${code}: the last digit does not match — it was probably misread. Scan it again or retype it.`, true); $('#scan').select(); return; }
   const key = by + ':' + code.toUpperCase(), hit = lookCache.get(key);
   if (hit && Date.now() - hit.t < 30000){ openItem(JSON.parse(JSON.stringify(hit.item))); return; }
   try{
@@ -649,6 +656,7 @@ let addWorldBusy = false;
 async function addWorld(){
   const raw = $('#addIsbn').value.trim();
   if (!toIsbn13(raw)){ $('#addWorld').innerHTML = raw ? 'That does not look like an ISBN.' : ''; return; }
+  if (/^97[89]\d{10}$/.test(isbnClean(raw)) && !isbn13Valid(raw)){ $('#addWorld').innerHTML = '⚠ The last digit does not match — check the number (it may have been misread).'; return; }
   if (addWorldBusy) return; addWorldBusy = true;
   $('#addWorld').innerHTML = '🌍 Looking it up…';
   const w = await worldLookup(raw);
@@ -1031,17 +1039,25 @@ function setTab(t){
 }
 
 /* ---------------- camera ---------------- */
-let scanner = null, scanning = false;
+let scanner = null, scanning = false, lastRead = '', readCount = 0;
 async function startCam(){
   if (scanning){ stopCam(); return; }
   if (typeof Html5Qrcode === 'undefined'){ toast('Camera scanner library did not load — check internet', true); return; }
   $('#cam').classList.add('on');
   const F = Html5QrcodeSupportedFormats;
-  const formats = scanMode === 'isbn' ? [F.EAN_13, F.EAN_8] : [F.CODE_128, F.CODE_39, F.CODE_93, F.CODABAR, F.ITF, F.QR_CODE, F.DATA_MATRIX];   // so the ISBN and the label are never mixed up
+  const formats = scanMode === 'isbn' ? [F.EAN_13] : [F.CODE_128, F.CODE_39, F.CODE_93, F.CODABAR, F.ITF, F.QR_CODE, F.DATA_MATRIX];   // so the ISBN and the label are never mixed up
   scanner = new Html5Qrcode('cam', {useBarCodeDetectorIfSupported: true, verbose: false, formatsToSupport: formats});
   try{
     await scanner.start({facingMode:'environment'}, {fps:10, qrbox:{width:260, height:140}},
-      txt => { if (navigator.vibrate) navigator.vibrate(60); stopCam(); $('#scan').value = txt; lookup(txt); }, () => {});
+      txt => {
+        if (scanMode === 'isbn'){                                   // the cover also has a 5-digit add-on that can confuse the reader
+          if (!isbn13Valid(txt)){ lastRead = ''; return; }          // misread: keep looking
+          if (txt !== lastRead){ lastRead = txt; readCount = 1; return; }
+          if (++readCount < 2) return;                              // same valid number twice = confident
+        }
+        lastRead = ''; readCount = 0;
+        if (navigator.vibrate) navigator.vibrate(60); stopCam(); $('#scan').value = txt; lookup(txt);
+      }, () => {});
     scanning = true; $('#camBtn').textContent = '✕ Close camera';
   }catch(e){
     scanner = null; $('#cam').classList.remove('on');
