@@ -110,6 +110,9 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 .field{margin-bottom:12px}
 .holdbox{background:var(--hold-bg);border-radius:12px;padding:12px;margin:4px 0 12px}
 .holdbox .hint{color:var(--hold)}
+.seg{display:flex;gap:6px;margin-bottom:12px;background:var(--bg);padding:4px;border-radius:12px}
+.seg button{flex:1;padding:11px 6px;border-radius:9px;border:0;background:transparent;color:var(--muted);font:700 14px inherit;cursor:pointer}
+.seg button.on{background:var(--brand);color:var(--brand-ink)}
 .phrow{margin-top:8px}
 .phrow .thumbs{margin-top:6px}
 #upl{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:97;max-width:92vw;padding:9px 16px;border-radius:99px;background:var(--ink);color:var(--bg);font-size:13px;font-weight:700;display:none;box-shadow:0 6px 24px rgba(0,0,0,.35)}
@@ -212,7 +215,11 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
   <!-- RECEIVE -->
   <section id="tab-receive">
     <div class="card">
-      <label for="scan">Scan the product barcode or the ISBN</label>
+      <div class="seg" id="scanMode" role="tablist" aria-label="What are you scanning?">
+        <button type="button" data-m="barcode" class="on">▮▯▮ Product barcode</button>
+        <button type="button" data-m="isbn">📖 ISBN</button>
+      </div>
+      <label for="scan" id="scanLabel">Scan the product barcode (the X… label)</label>
       <form id="scanForm" class="row">
         <input id="scan" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scan barcode…">
         <button class="btn" type="submit">Go</button>
@@ -233,6 +240,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
         <div class="code" id="addCode" style="font:13px ui-monospace,Menlo,monospace;color:var(--muted)"></div>
         <div class="hint" style="margin:8px 0 14px">This barcode will be added to the sheet as a new row. Type the book name and the quantity, then continue as normal.</div>
         <div class="field"><label for="addName">Book name</label><input id="addName" type="text" autocomplete="off" placeholder="Title of the book"></div>
+        <div class="field"><label for="addIsbn">ISBN <span style="font-weight:500">(optional — scan or type it)</span></label><input id="addIsbn" type="text" autocomplete="off" inputmode="numeric" placeholder="978…"></div>
         <div class="field"><label for="addQty">Quantity</label><input id="addQty" type="number" inputmode="numeric" min="0" step="1" placeholder="0"></div>
         <button class="btn block" id="addSave">Add to sheet &amp; continue</button>
         <button class="btn ghost block" id="addCancel" style="margin-top:8px">Cancel</button>
@@ -535,14 +543,33 @@ function showStep(n){
 }
 function resetReceive(){ cur = null; photos = []; renderThumbs(); $('#work').classList.add('hidden'); $('#scan').value = ''; stopCam(); $('#scan').focus(); }
 
+let scanMode = store.get('mode', 'barcode');
+function setMode(m, keepCamera){
+  scanMode = m === 'isbn' ? 'isbn' : 'barcode'; store.set('mode', scanMode);
+  document.querySelectorAll('#scanMode button').forEach(b => b.classList.toggle('on', b.dataset.m === scanMode));
+  $('#scanLabel').textContent = scanMode === 'isbn' ? 'Scan the ISBN (the barcode printed on the cover)' : 'Scan the product barcode (the X… label)';
+  $('#scan').placeholder = scanMode === 'isbn' ? 'Scan ISBN…' : 'Scan barcode…';
+  if (scanning && !keepCamera){ stopCam().then(startCam); }   // camera reads different barcode types per option
+  $('#scan').focus();
+}
+const looksLikeIsbn = v => /^(97[89][\d-]{10,14}|\d{9}[\dXx])$/.test(String(v).replace(/\s/g, ''));
+
 async function lookup(code){
   code = String(code).trim();
   if (!code) return;
-  const key = code.toUpperCase(), hit = lookCache.get(key);
+  const by = scanMode;
+  const key = by + ':' + code.toUpperCase(), hit = lookCache.get(key);
   if (hit && Date.now() - hit.t < 30000){ openItem(JSON.parse(JSON.stringify(hit.item))); return; }
   try{
-    const r = await api('lookup', {barcode: code});
-    if (!r.found){ openAdd(code); return; }
+    const r = await api('lookup', {barcode: code, by});
+    if (!r.found){
+      if (by === 'isbn'){
+        if (!looksLikeIsbn(code) && confirm(`"${code}" does not look like an ISBN. Search it as a product barcode instead?`)){ setMode('barcode'); lookup(code); return; }
+        toast(`ISBN ${code} is not in the sheet. Scan the product barcode to add this book.`, true); $('#scan').select(); return;
+      }
+      if (looksLikeIsbn(code) && confirm(`"${code}" looks like an ISBN, not a product barcode. Search it as an ISBN instead?`)){ setMode('isbn'); lookup(code); return; }
+      openAdd(code); return;
+    }
     lookCache.set(key, {t: Date.now(), item: JSON.parse(JSON.stringify(r.item))});
     openItem(r.item);
   }catch(e){ toast(e.message, true); }
@@ -555,7 +582,7 @@ const num = b => { const v = inp(b).value; return v === '' ? 0 : Number(v); };
 function openAdd(code){
   cur = null; stopCam();
   $('#addCode').textContent = code;
-  $('#addName').value = ''; $('#addQty').value = '';
+  $('#addName').value = ''; $('#addQty').value = ''; $('#addIsbn').value = '';
   showStep(0);
   $('#addName').focus();
 }
@@ -565,7 +592,7 @@ async function saveAdd(){
   if (q === '' || !Number.isInteger(Number(q)) || Number(q) < 0){ toast('Type the quantity (whole number)', true); $('#addQty').focus(); return; }
   const b = $('#addSave'); busy(b, true);
   try{
-    const r = await api('add', {barcode: $('#addCode').textContent, desc, expected: Number(q)});
+    const r = await api('add', {barcode: $('#addCode').textContent, desc, expected: Number(q), isbn: $('#addIsbn').value.trim()});
     toast(r.existed ? 'That barcode was already in the sheet' : 'Added to the sheet');
     openItem(r.item); scheduleRefresh();
   }catch(e){ toast(e.message, true); }
@@ -937,7 +964,9 @@ async function startCam(){
   if (scanning){ stopCam(); return; }
   if (typeof Html5Qrcode === 'undefined'){ toast('Camera scanner library did not load — check internet', true); return; }
   $('#cam').classList.add('on');
-  scanner = new Html5Qrcode('cam', {useBarCodeDetectorIfSupported: true, verbose: false});
+  const F = Html5QrcodeSupportedFormats;
+  const formats = scanMode === 'isbn' ? [F.EAN_13, F.EAN_8] : [F.CODE_128, F.CODE_39, F.CODE_93, F.CODABAR, F.ITF, F.QR_CODE, F.DATA_MATRIX];   // so the ISBN and the label are never mixed up
+  scanner = new Html5Qrcode('cam', {useBarCodeDetectorIfSupported: true, verbose: false, formatsToSupport: formats});
   try{
     await scanner.start({facingMode:'environment'}, {fps:10, qrbox:{width:260, height:140}},
       txt => { if (navigator.vibrate) navigator.vibrate(60); stopCam(); $('#scan').value = txt; lookup(txt); }, () => {});
@@ -964,6 +993,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => setTab(b.
 $('#rowsBox').onclick = e => { const b = e.target.closest('.openrel'); if (b){ $('#scan').value = b.dataset.code; lookup(b.dataset.code); } };
 $('#scanForm').onsubmit = e => { e.preventDefault(); lookup($('#scan').value); };
 $('#camBtn').onclick = startCam;
+document.querySelectorAll('#scanMode button').forEach(b => b.onclick = () => setMode(b.dataset.m));
 document.querySelectorAll('.crow').forEach(row => {
   const i = row.querySelector('input');
   i.oninput = updateVerdict;
@@ -1030,6 +1060,7 @@ $('#testConn').onclick = async () => {
   Object.assign(cfg, saved);
 };
 
+setMode(scanMode, true);
 const dataReady = refreshList(true);
 (function(){   // startup splash: stays for the animation (min) and until the first sheet read finishes (max 6s)
   const t0 = performance.now(), reduce = matchMedia('(prefers-reduced-motion: reduce)').matches, MIN = reduce ? 0 : 2700;
