@@ -648,7 +648,7 @@ async function saveQty(){
       else toast('Saved (email reports are switched off in Code.gs)');
     }
     renderAssign(cur, r.workRow); showStep(2);
-    scheduleRefresh();
+    scheduleRefresh(); if (mode === 'replace') fireView();
   }catch(e){ toast(e.message, true); }
   busy(b, false);
 }
@@ -749,7 +749,7 @@ async function saveAssign(){
     $('#doneTitle').textContent = short ? 'Saved (some units not placed)' : 'Saved';
     $('#doneSub').innerHTML = esc(r.item.desc) + '<br>' + Object.keys(locs).map(b => `${BNAME[b]}: ` + locs[b].map(x => `${x.qty} → Box ${esc(x.box)} / Pallet ${esc(x.pallet)}`).join(', ')).join('<br>');
     if (closeBoxes.length) $('#doneSub').innerHTML += '<br><b>Box ' + [...new Set(closeBoxes)].map(esc).join(', ') + ' marked complete ✓</b>';
-    showStep(3); scheduleRefresh();
+    showStep(3); scheduleRefresh(); fireView();
   }catch(e){ toast(e.message, true); }
   busy(btn, false);
 }
@@ -783,6 +783,8 @@ function renderThumbs(){
 /* ---------------- lists ---------------- */
 let items = [], filter = '';
 let refreshT = null;   // list refresh waits until the sheet is idle, so it never slows down the next scan
+let viewT = null;   // refreshes the sheet's "Stock by Box" tab in the background, after the save is already done
+function fireView(){ clearTimeout(viewT); viewT = setTimeout(() => { apiRaw('view', {}).catch(() => {}); }, 1500); }
 function scheduleRefresh(){ clearTimeout(refreshT); refreshT = setTimeout(() => { if (pending > 0) scheduleRefresh(); else refreshList(true); }, 5000); }
 async function refreshList(silent){
   try{ const r = await api('list'); items = r.items; closedBoxes = new Set(r.closed || []); renderAllLists(); if (!silent) toast('Refreshed'); }
@@ -892,7 +894,7 @@ async function saveResolve(){
     await api('resolve', p);
     lastLoc[to] = {box: p.box, pallet: p.pallet}; store.set('lastLoc2', lastLoc);
     $('#resolveDlg').close(); toast(`${p.qty} unit${p.qty === 1 ? '' : 's'} reclassified as ${BNAME[to]}`);
-    scheduleRefresh();
+    scheduleRefresh(); fireView();
   }catch(e){ toast(e.message, true); }
   busy(b, false);
 }
@@ -975,7 +977,7 @@ $('#boxList').onclick = async e => {
   const closing = b.dataset.closed === '1';
   if (closing && !confirm(`Mark box ${b.dataset.box} complete? Nothing more can be added to it.`)) return;
   busy(b, true);
-  try{ await api('box', {box: b.dataset.box, closed: closing}); toast(closing ? `Box ${b.dataset.box} marked complete` : `Box ${b.dataset.box} reopened`); await refreshList(true); }
+  try{ await api('box', {box: b.dataset.box, closed: closing}); toast(closing ? `Box ${b.dataset.box} marked complete` : `Box ${b.dataset.box} reopened`); fireView(); await refreshList(true); }
   catch(err){ toast(err.message, true); busy(b, false); }
 };
 $('#search').oninput = renderAll;
