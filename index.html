@@ -110,6 +110,12 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 .field{margin-bottom:12px}
 .holdbox{background:var(--hold-bg);border-radius:12px;padding:12px;margin:4px 0 12px}
 .holdbox .hint{color:var(--hold)}
+.phrow{margin-top:8px}
+.phrow .thumbs{margin-top:6px}
+#upl{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:97;max-width:92vw;padding:9px 16px;border-radius:99px;background:var(--ink);color:var(--bg);font-size:13px;font-weight:700;display:none;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+#upl.on{display:flex;align-items:center;gap:8px}
+#upl.on:not(.ok):not(.bad)::before{content:'';width:14px;height:14px;border-radius:50%;border:3px solid rgba(128,128,128,.5);border-top-color:var(--brand);animation:spin .8s linear infinite}
+#upl.ok{background:var(--ln);color:#fff} #upl.bad{background:var(--dmg);color:#fff}
 .thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .thumbs div{position:relative;width:64px;height:64px}
 .thumbs img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
@@ -206,7 +212,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
   <!-- RECEIVE -->
   <section id="tab-receive">
     <div class="card">
-      <label for="scan">Scan or type barcode / ISBN</label>
+      <label for="scan">Scan the product barcode or the ISBN</label>
       <form id="scanForm" class="row">
         <input id="scan" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scan barcode…">
         <button class="btn" type="submit">Go</button>
@@ -242,12 +248,13 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
           <div class="stat"><b id="iExp">0</b><span>EXPECTED</span><small id="iExpSub"></small></div>
           <div class="stat"><b id="iRec">–</b><span>ALREADY RECEIVED</span><small id="iRecSub"></small></div>
         </div>
+        <input type="file" id="photoIn" accept="image/*" multiple class="hidden">
         <div class="hint" style="margin:-4px 0 12px">Inspect every book one by one, then count how many are in each condition. Unsure or borderline → <b>On Hold</b>.</div>
 
         <div class="crow ln" data-b="ln"><div class="name">Like New <small>FBM sellable</small></div>
-          <div class="counter"><button type="button" class="minus">−</button><input type="number" inputmode="numeric" min="0" step="1" placeholder="0"><button type="button" class="plus">+</button></div></div>
+          <div class="counter"><button type="button" class="minus">−</button><input type="number" inputmode="numeric" min="0" step="1" placeholder="0"><button type="button" class="plus">+</button></div><div class="phrow"><button type="button" class="btn ghost sm addph" data-b="ln">📷 Add photos</button><div class="thumbs" data-b="ln"></div></div></div>
         <div class="crow vg" data-b="vg"><div class="name">Very Good <small>FBM sellable</small></div>
-          <div class="counter"><button type="button" class="minus">−</button><input type="number" inputmode="numeric" min="0" step="1" placeholder="0"><button type="button" class="plus">+</button></div></div>
+          <div class="counter"><button type="button" class="minus">−</button><input type="number" inputmode="numeric" min="0" step="1" placeholder="0"><button type="button" class="plus">+</button></div><div class="phrow"><button type="button" class="btn ghost sm addph" data-b="vg">📷 Add photos</button><div class="thumbs" data-b="vg"></div></div></div>
         <div class="crow hold" data-b="hold"><div class="name">On Hold <small>not sellable</small></div>
           <div class="counter"><button type="button" class="minus">−</button><input type="number" inputmode="numeric" min="0" step="1" placeholder="0"><button type="button" class="plus">+</button></div></div>
 
@@ -256,11 +263,10 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
           <textarea id="holdNote" placeholder="e.g. Spine cracked, 6 pages loose near the middle…"></textarea>
           <div style="margin-top:10px">
             <label style="color:var(--hold)">Photos <span style="font-weight:500">(optional, but recommended)</span></label>
-            <input type="file" id="photoIn" accept="image/*" multiple class="hidden">
-            <button type="button" class="btn ghost sm" id="addPhoto">📷 Add photos</button>
-            <div class="thumbs" id="thumbs"></div>
+            <button type="button" class="btn ghost sm addph" data-b="hold">📷 Add photos</button>
+            <div class="thumbs" data-b="hold"></div>
           </div>
-          <div class="hint">These books must be kept physically apart. A report with your photos (and description, if any) is emailed to YVENTURES, who must decide within 14 days.</div>
+          <div class="hint">These books must be kept physically apart. A report with these photos (and description, if any) is emailed to YVENTURES, who must decide within 14 days. All photos are also saved to Google Drive under this barcode.</div>
         </div>
 
         <div id="verdict" class="verdict v-none">Enter the number of books in each condition</div>
@@ -395,6 +401,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
 
 <div id="busy"><div class="box"><div class="ring"></div><div id="busyText">Working…</div></div></div>
 <div id="topbar"><i></i></div>
+<div id="upl"></div>
 <div id="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
@@ -482,7 +489,7 @@ async function api(action, p = {}){
 }
 async function apiRaw(action, p = {}){
   const body = {action, token: cfg.token, user: cfg.user, ...p};
-  const write = ['receive','assign','resolve','box','add'].includes(action);
+  const write = ['receive','assign','resolve','box','add','photos'].includes(action);
   let res;
   try{
     if (write) res = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body), redirect:'follow'}); // text/plain avoids CORS preflight
@@ -515,7 +522,7 @@ function holdInfo(i){
 /* ---------------- receive flow ---------------- */
 let cur = null;
 let lastLoc = store.get('lastLoc2', {});
-let photos = [];   // [{name, data(base64), url}]
+let photos = [], photoSeq = 0, photoTarget = 'ln';   // [{id, cond, name, data(base64), url}]
 
 function showStep(n){
   $('#work').classList.remove('hidden');
@@ -572,13 +579,13 @@ function renderRows(it){
   if (rows.length > 1) h += `<div class="rb-h">⚠ This barcode is on ${rows.length} rows in the sheet — expected is the total (${it.expected})</div>` +
     rows.map(r => `<div class="rb-r"><b>Row ${r.row}</b><span>${esc(r.info)}${r.counted ? `<br><b style="color:var(--ln)">✓ counted: LN ${r.ln} · VG ${r.vg} · Hold ${r.hold}${r.dmg ? ' · Dmg ' + r.dmg : ''}</b>` : (r.row === it.nextRow ? '<br><b style="color:var(--brand)">← next free row</b>' : '')}</span><em>qty ${r.expected}</em></div>`).join('');
   if (rel.length) h += `<div class="rb-h" style="margin-top:8px">Same ISBN, different barcode (NOT in the total):</div>` +
-    rel.map(r => `<div class="rb-r"><b>Row ${r.row}</b><span>${esc(r.barcode)} · ${esc(r.info)}</span><em>qty ${r.expected}</em></div>`).join('');
+    rel.map(r => `<div class="rb-r"><b>Row ${r.row}</b><span>${esc(r.barcode)} · ${esc(r.info)}<br><button type="button" class="btn ghost sm openrel" data-code="${esc(r.barcode)}" style="margin-top:4px">Open ${esc(r.barcode)}</button></span><em>qty ${r.expected}</em></div>`).join('');
   box.innerHTML = h; box.classList.remove('hidden');
 }
 function openItem(it){
   cur = it; photos = []; renderThumbs();
   $('#iDesc').textContent = it.desc || '(no description)';
-  $('#iCode').textContent = it.barcode;
+  $('#iCode').textContent = it.barcode + (it.isbn && it.isbn.replace(/\D/g, '') !== it.barcode ? '  ·  ISBN ' + it.isbn : '');
   $('#iExp').textContent = it.expected;
   renderRows(it);
   const bm = boxMap(it), inBoxes = bm.reduce((s, o) => s + boxTotal(o), 0);
@@ -634,14 +641,15 @@ async function saveQty(){
   if (Object.values(c).some(n => !Number.isInteger(n) || n < 0)){ toast('Counts must be whole numbers', true); return; }
   const note = $('#holdNote').value.trim();
   if (c.hold > 0){
-    if (REQUIRE_HOLD_PHOTO && !photos.length){ toast('Add at least one photo of the On Hold books', true); return; }
+    if (REQUIRE_HOLD_PHOTO && !photos.filter(p => p.cond === 'hold').length){ toast('Add at least one photo of the On Hold books', true); return; }
   }
   let mode = 'next';
   if (cur.received !== null){ mode = await askMode(c); if (!mode) return; }
   const b = $('#saveQty'); busy(b, true);
   try{
-    const r = await api('receive', {barcode: cur.barcode, ...c, mode, holdNote: note, photos: photos.map(p => ({name:p.name, data:p.data}))});
+    const r = await api('receive', {barcode: cur.barcode, ...c, mode, holdNote: note, photos: photos.filter(p => p.cond === 'hold').map(p => ({name:p.name, data:p.data}))});
     cur = r.item; cur.workRow = r.workRow;
+    uploadPhotos(cur.barcode, r.workRow, photos.slice());
     if (c.hold > 0){
       if (r.emailed) toast('✓ On Hold report emailed to YVENTURES');
       else if (r.emailError) toast('Saved, but the report email FAILED: ' + r.emailError + ' — send it manually', true);
@@ -777,7 +785,23 @@ function resizeToJpeg(file, max = 1280, q = 0.72){
   });
 }
 function renderThumbs(){
-  $('#thumbs').innerHTML = photos.map((p, i) => `<div><img src="${p.url}" alt=""><button type="button" data-i="${i}" aria-label="Remove photo">×</button></div>`).join('');
+  document.querySelectorAll('.thumbs[data-b]').forEach(el => {
+    el.innerHTML = photos.filter(p => p.cond === el.dataset.b).map(p => `<div><img src="${p.url}" alt=""><button type="button" data-id="${p.id}" aria-label="Remove photo">×</button></div>`).join('');
+  });
+}
+let upT = null;
+function setUpl(msg, kind){
+  const el = $('#upl'); el.textContent = msg; el.className = 'on' + (kind ? ' ' + kind : '');
+  clearTimeout(upT); if (kind) upT = setTimeout(() => { el.className = ''; }, kind === 'bad' ? 9000 : 3500);
+}
+/* pictures go to Google Drive in the background (folder per barcode) — the count itself is already saved */
+async function uploadPhotos(barcode, row, list){
+  if (!list.length) return;
+  setUpl(`Uploading ${list.length} photo${list.length === 1 ? '' : 's'} to Google Drive…`);
+  try{
+    const r = await apiRaw('photos', {barcode, row, photos: list.map(p => ({name: p.name, data: p.data, cond: p.cond}))});
+    setUpl(`✓ ${r.saved} photo${r.saved === 1 ? '' : 's'} saved to Drive`, 'ok');
+  }catch(e){ setUpl('⚠ Photos NOT saved to Drive: ' + e.message, 'bad'); }
 }
 
 /* ---------------- lists ---------------- */
@@ -937,6 +961,7 @@ const readCfgForm = () => ({url: $('#cfgUrl').value.trim() || DEFAULT_URL, token
 
 /* ---------------- wiring ---------------- */
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+$('#rowsBox').onclick = e => { const b = e.target.closest('.openrel'); if (b){ $('#scan').value = b.dataset.code; lookup(b.dataset.code); } };
 $('#scanForm').onsubmit = e => { e.preventDefault(); lookup($('#scan').value); };
 $('#camBtn').onclick = startCam;
 document.querySelectorAll('.crow').forEach(row => {
@@ -946,15 +971,19 @@ document.querySelectorAll('.crow').forEach(row => {
   row.querySelector('.plus').onclick = () => { i.value = (Number(i.value) || 0) + 1; updateVerdict(); };
   row.querySelector('.minus').onclick = () => { i.value = Math.max(0, (Number(i.value) || 0) - 1); updateVerdict(); };
 });
-$('#addPhoto').onclick = () => $('#photoIn').click();
+document.addEventListener('click', e => {
+  const add = e.target.closest('.addph');
+  if (add){ photoTarget = add.dataset.b; $('#photoIn').click(); return; }
+  const rm = e.target.closest('.thumbs button');
+  if (rm){ photos = photos.filter(p => p.id !== Number(rm.dataset.id)); renderThumbs(); }
+});
 $('#photoIn').onchange = async e => {
   for (const f of [...e.target.files]){
-    if (photos.length >= 8){ toast('Max 8 photos', true); break; }
-    try{ photos.push(await resizeToJpeg(f)); }catch(err){ toast(err.message, true); }
+    if (photos.length >= 12){ toast('Max 12 photos per count', true); break; }
+    try{ const ph = await resizeToJpeg(f); ph.id = ++photoSeq; ph.cond = photoTarget; photos.push(ph); }catch(err){ toast(err.message, true); }
   }
   e.target.value = ''; renderThumbs();
 };
-$('#thumbs').onclick = e => { const b = e.target.closest('button'); if (b){ photos.splice(Number(b.dataset.i), 1); renderThumbs(); } };
 $('#saveQty').onclick = saveQty;
 $('#addSave').onclick = saveAdd;
 $('#addCancel').onclick = resetReceive;
