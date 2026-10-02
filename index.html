@@ -237,10 +237,12 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
       <!-- step 0: barcode not in the sheet yet -->
       <div class="card hidden" id="stepAdd">
         <h2 style="margin:0 0 4px">New book — not in the sheet yet</h2>
-        <div class="code" id="addCode" style="font:13px ui-monospace,Menlo,monospace;color:var(--muted)"></div>
-        <div class="hint" style="margin:8px 0 14px">This barcode will be added to the sheet as a new row. Type the book name and the quantity, then continue as normal.</div>
+        <div class="hint" style="margin:6px 0 14px">This will be added to the sheet as a new row. Scan or type the barcode and the ISBN — the title can be filled in from the world ISBN database.</div>
+        <div class="field"><label for="addCode">Product barcode <span style="font-weight:500">(the X… label — scan or type)</span></label><input id="addCode" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="X001…"></div>
+        <div class="field"><label for="addIsbn">ISBN <span style="font-weight:500">(scan or type)</span></label>
+          <div class="row"><input id="addIsbn" type="text" autocomplete="off" inputmode="numeric" placeholder="978…"><button type="button" class="btn ghost sm" id="addLookup">🌍 Look up title</button></div>
+          <div class="hint" id="addWorld"></div></div>
         <div class="field"><label for="addName">Book name</label><input id="addName" type="text" autocomplete="off" placeholder="Title of the book"></div>
-        <div class="field"><label for="addIsbn">ISBN <span style="font-weight:500">(optional — scan or type it)</span></label><input id="addIsbn" type="text" autocomplete="off" inputmode="numeric" placeholder="978…"></div>
         <div class="field"><label for="addQty">Quantity</label><input id="addQty" type="number" inputmode="numeric" min="0" step="1" placeholder="0"></div>
         <button class="btn block" id="addSave">Add to sheet &amp; continue</button>
         <button class="btn ghost block" id="addCancel" style="margin-top:8px">Cancel</button>
@@ -250,6 +252,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
       <div class="card item" id="stepCount">
         <h2 id="iDesc"></h2>
         <div class="code" id="iCode"></div>
+        <div id="worldBox" class="hint hidden" style="margin:8px 0 0"></div>
         <div id="rowsBox" class="rowsbox hidden"></div>
         <div id="whereBox" class="hint hidden" style="margin:10px 0 0"></div>
         <div class="stats">
@@ -555,10 +558,63 @@ function setMode(m, keepCamera){
 }
 const looksLikeIsbn = v => /^(97[89][\d-]{10,14}|\d{9}[\dXx])$/.test(String(v).replace(/\s/g, ''));
 
+/* ---------------- ISBN database of the world (Open Library, then Google Books) ---------------- */
+const isbnClean = v => String(v || '').replace(/[\s-]/g, '').replace(/_[A-Za-z0-9]+$/, '').toUpperCase();
+function toIsbn13(v){
+  v = isbnClean(v);
+  if (/^\d{9}[\dX]$/.test(v)){ const d = '978' + v.slice(0, 9); let s = 0; for (let i = 0; i < 12; i++) s += Number(d[i]) * (i % 2 ? 3 : 1); return d + ((10 - s % 10) % 10); }
+  return /^97[89]\d{10}$/.test(v) ? v : '';
+}
+const isbnCache = store.get('isbnc', {});
+async function fetchJson(url){
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), 9000);
+  try{ const r = await fetch(url, {signal: ac.signal}); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); }
+  finally{ clearTimeout(t); }
+}
+/* → {title, authors, year, source}  |  {notFound:true}  |  {unreachable:true}  |  null (not an ISBN) */
+async function worldLookup(raw){
+  const i13 = toIsbn13(raw);
+  if (!i13) return null;
+  if (isbnCache[i13]) return isbnCache[i13];
+  let info = null, reached = false;
+  try{
+    const d = await fetchJson(`https://openlibrary.org/api/books?bibkeys=ISBN:${i13}&format=json&jscmd=data`);
+    reached = true;
+    const v = d['ISBN:' + i13];
+    if (v) info = {title: [v.title, v.subtitle].filter(Boolean).join(': '), authors: (v.authors || []).map(a => a.name).join(', '), year: ((v.publish_date || '').match(/\d{4}/) || [''])[0], source: 'Open Library'};
+  }catch{}
+  if (!info){
+    try{
+      const d = await fetchJson(`https://www.googleapis.com/books/v1/volumes?q=isbn:${i13}&maxResults=1`);
+      reached = true;
+      const v = d.items && d.items[0] && d.items[0].volumeInfo;
+      if (v) info = {title: [v.title, v.subtitle].filter(Boolean).join(': '), authors: (v.authors || []).join(', '), year: ((v.publishedDate || '').match(/\d{4}/) || [''])[0], source: 'Google Books'};
+    }catch{}
+  }
+  if (info){ isbnCache[i13] = info; store.set('isbnc', isbnCache); return info; }
+  return reached ? {notFound: true} : {unreachable: true};
+}
+const worldLine = w => w.unreachable ? '🌍 World ISBN database not reachable right now.' : w.notFound ? '🌍 Not found in the world ISBN database.' :
+  `🌍 <b>${esc(w.title)}</b>${w.authors ? ' — ' + esc(w.authors) : ''}${w.year ? ' (' + esc(w.year) + ')' : ''} <small>· ${esc(w.source)}</small>`;
+const sameTitle = (a, b) => { const n = x => String(x).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); a = n(a); b = n(b); return !!a && !!b && (a.includes(b) || b.includes(a) || a.split(' ').filter(w => w.length > 3 && b.includes(w)).length >= 2); };
+
+let lastScan = '';
+async function showWorld(it){
+  const box = $('#worldBox');
+  const isbn = it.isbn || (scanMode === 'isbn' ? lastScan : '');
+  if (!toIsbn13(isbn)){ box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const token = it.barcode; box.classList.remove('hidden'); box.innerHTML = '🌍 Checking the world ISBN database…';
+  const w = await worldLookup(isbn);
+  if (!cur || cur.barcode !== token) return;                 // the team already moved on
+  let extra = '';
+  if (w && w.title && it.desc) extra = sameTitle(w.title, it.desc) ? ' <span style="color:var(--ln);font-weight:700">✓ matches the sheet</span>' : ' <span style="color:var(--hold);font-weight:700">⚠ differs from the sheet title</span>';
+  box.innerHTML = worldLine(w) + extra;
+}
+
 async function lookup(code){
   code = String(code).trim();
   if (!code) return;
-  const by = scanMode;
+  const by = scanMode; lastScan = code;
   const key = by + ':' + code.toUpperCase(), hit = lookCache.get(key);
   if (hit && Date.now() - hit.t < 30000){ openItem(JSON.parse(JSON.stringify(hit.item))); return; }
   try{
@@ -566,10 +622,10 @@ async function lookup(code){
     if (!r.found){
       if (by === 'isbn'){
         if (!looksLikeIsbn(code) && confirm(`"${code}" does not look like an ISBN. Search it as a product barcode instead?`)){ setMode('barcode'); lookup(code); return; }
-        toast(`ISBN ${code} is not in the sheet. Scan the product barcode to add this book.`, true); $('#scan').select(); return;
+        openAdd('', code); return;                     // ISBN not in the sheet: add it — the title comes from the world database
       }
       if (looksLikeIsbn(code) && confirm(`"${code}" looks like an ISBN, not a product barcode. Search it as an ISBN instead?`)){ setMode('isbn'); lookup(code); return; }
-      openAdd(code); return;
+      openAdd(code, ''); return;
     }
     lookCache.set(key, {t: Date.now(), item: JSON.parse(JSON.stringify(r.item))});
     openItem(r.item);
@@ -580,20 +636,33 @@ const counts = () => ({ln: num('ln'), vg: num('vg'), hold: num('hold')});
 const inp = b => document.querySelector(`.crow[data-b=${b}] input`);
 const num = b => { const v = inp(b).value; return v === '' ? 0 : Number(v); };
 
-function openAdd(code){
+function openAdd(code, isbn){
   cur = null; stopCam();
-  $('#addCode').textContent = code;
-  $('#addName').value = ''; $('#addQty').value = ''; $('#addIsbn').value = '';
+  $('#addCode').value = code || '';
+  $('#addName').value = ''; $('#addQty').value = ''; $('#addIsbn').value = isbn || ''; $('#addWorld').innerHTML = '';
+  if (isbn) addWorld();
   showStep(0);
-  $('#addName').focus();
+  (code ? $('#addName') : $('#addCode')).focus();
+}
+let addWorldBusy = false;
+async function addWorld(){
+  const raw = $('#addIsbn').value.trim();
+  if (!toIsbn13(raw)){ $('#addWorld').innerHTML = raw ? 'That does not look like an ISBN.' : ''; return; }
+  if (addWorldBusy) return; addWorldBusy = true;
+  $('#addWorld').innerHTML = '🌍 Looking it up…';
+  const w = await worldLookup(raw);
+  addWorldBusy = false;
+  $('#addWorld').innerHTML = worldLine(w);
+  if (w && w.title && !$('#addName').value.trim()) $('#addName').value = w.title;
 }
 async function saveAdd(){
-  const desc = $('#addName').value.trim(), q = $('#addQty').value;
+  const code = $('#addCode').value.trim(), desc = $('#addName').value.trim(), q = $('#addQty').value;
+  if (!code){ toast('Scan or type the product barcode', true); $('#addCode').focus(); return; }
   if (!desc){ toast('Type the book name', true); $('#addName').focus(); return; }
   if (q === '' || !Number.isInteger(Number(q)) || Number(q) < 0){ toast('Type the quantity (whole number)', true); $('#addQty').focus(); return; }
   const b = $('#addSave'); busy(b, true);
   try{
-    const r = await api('add', {barcode: $('#addCode').textContent, desc, expected: Number(q), isbn: $('#addIsbn').value.trim()});
+    const r = await api('add', {barcode: code, desc, expected: Number(q), isbn: $('#addIsbn').value.trim()});
     toast(r.existed ? 'That barcode was already in the sheet' : 'Added to the sheet');
     openItem(r.item); scheduleRefresh();
   }catch(e){ toast(e.message, true); }
@@ -616,6 +685,7 @@ function openItem(it){
   $('#iCode').textContent = it.barcode + (it.isbn && it.isbn.replace(/\D/g, '') !== it.barcode ? '  ·  ISBN ' + it.isbn : '');
   $('#iExp').textContent = it.expected;
   renderRows(it);
+  showWorld(it);
   const bm = boxMap(it), inBoxes = bm.reduce((s, o) => s + boxTotal(o), 0);
   const where = bm.length ? '📦 <b>Where it is now</b><br>' + bm.map(o => `Pallet ${esc(o.pallet)} · Box ${esc(o.box)}: <b>${esc(condText(o))}</b>`).join('<br>') +
     `<br>Total in boxes: <b>${inBoxes}</b>` + (it.received !== null ? ` of ${it.received} counted` : '') + `<br>${palletSummary(bm)}` : '';
@@ -1017,6 +1087,11 @@ $('#photoIn').onchange = async e => {
 };
 $('#saveQty').onclick = saveQty;
 $('#addSave').onclick = saveAdd;
+$('#addLookup').onclick = addWorld;
+let isbnT = null;
+$('#addIsbn').oninput = () => { clearTimeout(isbnT); if (toIsbn13($('#addIsbn').value)) isbnT = setTimeout(addWorld, 400); };   // looks up by itself once a full ISBN is typed or scanned
+$('#addCode').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); $('#addIsbn').focus(); } };
+$('#addIsbn').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); addWorld(); $('#addName').focus(); } };
 $('#addCancel').onclick = resetReceive;
 $('#addQty').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); saveAdd(); } };
 $('#addName').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); $('#addQty').focus(); } };
