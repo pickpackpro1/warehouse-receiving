@@ -1002,6 +1002,7 @@ function plRow(b, d, canRemove){
     <label class="chk plc"><input type="checkbox" class="plcl"> Box complete — close it, nothing more can be added</label></div>`;
 }
 function updateRem(card){
+  if (!card.querySelector('.rem')) return;               // a condition that is already fully in boxes has no input lines
   const total = Number(card.dataset.total);
   const sum = [...card.querySelectorAll('.plq')].reduce((s, i) => s + (Number(i.value) || 0), 0);
   const el = card.querySelector('.rem');
