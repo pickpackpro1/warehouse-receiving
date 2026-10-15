@@ -1146,14 +1146,14 @@ function setUpl(msg, kind){
   clearTimeout(upT); if (kind) upT = setTimeout(() => { el.className = ''; }, kind === 'bad' ? 9000 : 3500);
 }
 /* pictures go to Google Drive in the background (folder per barcode) — the count itself is already saved */
-async function uploadPhotos(barcode, row, list){
+async function uploadPhotos(barcode, row, list, title){
   if (!list.length) return;
   setUpl(`Uploading ${list.length} photo${list.length === 1 ? '' : 's'} to Google Drive…`);
   try{
     const payload = list.map(p => ({name: p.name, data: p.data, cond: p.cond}));
     let r;
     if (cfg.photoUrl){                                      // the other person's Drive: their photo-drop script saves it there
-      const res = await fetch(cfg.photoUrl, {method: 'POST', body: JSON.stringify({barcode, photos: payload, user: cfg.user, secret: cfg.token}), redirect: 'follow'});
+      const res = await fetch(cfg.photoUrl, {method: 'POST', body: JSON.stringify({barcode, title: title || (cur && cur.barcode === barcode ? cur.desc : '') || '', photos: payload, user: cfg.user, secret: cfg.token}), redirect: 'follow'});
       r = await res.json();
       if (!r.ok) throw new Error(r.error || 'Photo drop did not accept the pictures');
       await apiRaw('photoLink', {barcode, row, url: r.url, saved: r.saved});     // only the folder link goes into the stock sheet
