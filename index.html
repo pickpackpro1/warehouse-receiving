@@ -265,10 +265,22 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
         <div class="field"><label for="addIsbn">ISBN <span style="font-weight:500">(scan or type)</span></label>
           <div class="row"><input id="addIsbn" type="text" autocomplete="off" inputmode="numeric" placeholder="978…"><button type="button" class="btn ghost sm" id="addLookup">🌍 Look up title</button></div>
           <div class="hint" id="addWorld"></div></div>
+        <div class="field"><button type="button" class="btn ghost sm idphoto" data-t="add">📷 Identify from a picture of the book</button><div class="hint" id="addIdStatus"></div></div>
         <div class="field"><label for="addName">Book name</label><input id="addName" type="text" autocomplete="off" placeholder="Title of the book"></div>
         <div class="field"><label for="addQty">Quantity</label><input id="addQty" type="number" inputmode="numeric" min="0" step="1" placeholder="0"></div>
         <button class="btn block" id="addSave">Add to sheet &amp; continue</button>
         <button class="btn ghost block" id="addCancel" style="margin-top:8px">Cancel</button>
+      </div>
+
+      <!-- a barcode (LPN) with no book details: take a picture to identify it -->
+      <div class="card hidden" id="lpnCard" style="border-color:var(--hold)">
+        <b style="color:var(--hold)">No book details for this barcode (LPN)</b>
+        <div class="hint" style="margin:4px 0 10px">Take a picture of the book. The picture is saved against this barcode in Google Drive, and the app tries to read the ISBN barcode or the cover to find the title.</div>
+        <button type="button" class="btn block idphoto" data-t="item">📷 Take a picture of the book</button>
+        <div class="hint" id="lpnStatus" style="margin-top:8px"></div>
+        <div id="lpnPick"></div>
+        <div class="field" style="margin-top:10px"><label for="lpnTitle">Or type the title</label>
+          <div class="row"><input id="lpnTitle" type="text" autocomplete="off" placeholder="Title of the book"><button type="button" class="btn sm" id="lpnSave">Save title</button></div></div>
       </div>
 
       <!-- step 1: inspect & count -->
@@ -284,6 +296,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
           <div class="stat"><b id="iRec">–</b><span>ALREADY RECEIVED</span><small id="iRecSub"></small></div>
         </div>
         <input type="file" id="photoIn" accept="image/*" multiple class="hidden">
+        <input type="file" id="idFile" accept="image/*" capture="environment" class="hidden">
         <div class="hint" style="margin:-4px 0 12px">Inspect every book one by one, then count how many are in each condition. Unsure or borderline → <b>On Hold</b>.</div>
 
         <div class="crow ln" data-b="ln"><div class="name">Like New <small>FBM sellable</small></div>
@@ -296,6 +309,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
         <div id="holdBox" class="holdbox hidden">
           <label for="holdNote" style="color:var(--hold)">Describe the condition <span style="font-weight:500">(optional)</span></label>
           <textarea id="holdNote" placeholder="e.g. Spine cracked, 6 pages loose near the middle…"></textarea>
+          <div class="hint" id="holdNoteOld" style="margin-top:4px"></div>
           <div style="margin-top:10px">
             <label style="color:var(--hold)">Photos <span style="font-weight:500">(optional, but recommended)</span></label>
             <button type="button" class="btn ghost sm addph" data-b="hold">📷 Add photos</button>
@@ -552,7 +566,21 @@ async function api(action, p = {}){
     $('#busyText').textContent = full;
     clearTimeout(busyT); busyT = setTimeout(() => $('#busy').classList.add('on'), 120);   // skip the flash on instant calls
   } else $('#topbar').classList.add('on');
-  try{ const r = await apiRaw(action, p); lastTiming = {action, total: Math.round(performance.now() - t0), server: r.ms}; if (WRITES.includes(action)) lookCache.clear(); return r; }
+  try{
+    let r;
+    for (let attempt = 0; ; attempt++){
+      try{ r = await apiRaw(action, p); break; }
+      catch(e){
+        if (attempt < 3 && /lock timeout|holding the lock|too many (simultaneous|times)/i.test(e.message)){   // the save never ran, so trying again is safe
+          $('#busyText').textContent = 'Another device is saving — trying again…';
+          $('#busy').classList.add('on');
+          await new Promise(res => setTimeout(res, 1500 * (attempt + 1)));
+          continue;
+        }
+        throw e;
+      }
+    }
+    lastTiming = {action, total: Math.round(performance.now() - t0), server: r.ms}; if (WRITES.includes(action)) lookCache.clear(); return r; }
   finally{
     pending--;
     if (full){ clearTimeout(busyT); $('#busy').classList.remove('on'); }
@@ -618,6 +646,133 @@ function setMode(m, keepCamera){
   $('#scan').focus();
 }
 const looksLikeIsbn = v => !!toIsbn13(v);
+
+/* ---------------- identify a book from a picture: ISBN barcode first, then the text on the cover ---------------- */
+async function loadScript(src){
+  if (document.querySelector(`script[src="${src}"]`)) return;
+  await new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('Could not load ' + src)); document.head.appendChild(s); });
+}
+async function decodeIsbnFromImage(file){
+  if (typeof Html5Qrcode === 'undefined') return '';
+  const holder = document.createElement('div'); holder.id = 'scanTmp' + Date.now(); holder.style.display = 'none'; document.body.appendChild(holder);
+  try{
+    const F = Html5QrcodeSupportedFormats;
+    const q = new Html5Qrcode(holder.id, {formatsToSupport: [F.EAN_13], useBarCodeDetectorIfSupported: true, verbose: false});
+    const tries = [file];
+    try{ const small = await resizeToJpeg(file, 1600, 0.85); tries.push(await (await fetch(small.url)).blob().then(b => new File([b], 'p.jpg', {type: 'image/jpeg'}))); }catch{}
+    for (const f of tries){
+      try{ const txt = await q.scanFile(f, false); if (isbn13Valid(txt)) return isbnClean(txt); }catch{}
+    }
+    return '';
+  } finally { holder.remove(); }
+}
+async function ocrText(file, setStatus){
+  setStatus('Reading the text on the cover… (the first time this downloads a reading tool, about 10 MB)');
+  await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js');
+  const small = await resizeToJpeg(file, 1800, 0.9);
+  const r = await Tesseract.recognize(small.url, 'eng');
+  return String(r.data.text || '');
+}
+async function searchBooks(text){
+  const words = new Set(text.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length > 2));
+  const lines = text.split(/\n+/).map(l => l.replace(/[^A-Za-z0-9&:'’\- ]+/g, ' ').replace(/\s+/g, ' ').trim()).filter(l => l.length >= 4 && /[A-Za-z]{3}/.test(l));
+  const tops = [...lines].sort((a, b) => b.length - a.length).slice(0, 5);
+  const queries = [tops.slice(0, 3).join(' '), tops.slice(0, 2).join(' '), ...tops.slice(0, 3), lines.slice(0, 3).join(' ')].filter(Boolean);
+  const found = new Map();
+  for (const q of queries){
+    try{
+      const d = await fetchJson(`https://openlibrary.org/search.json?q=${encodeURIComponent(q.slice(0, 140))}&limit=10&fields=title,subtitle,author_name,first_publish_year,isbn`);
+      (d.docs || []).forEach(x => {
+        const title = [x.title, x.subtitle].filter(Boolean).join(': '), key = String(x.title).toLowerCase();
+        if (found.has(key)) return;
+        const tw = String(title).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length > 2);
+        const hit = tw.filter(w => words.has(w)).length;
+        const authorHit = (x.author_name || []).some(a => String(a).toLowerCase().split(/\s+/).some(n => n.length > 2 && words.has(n)));
+        const score = (tw.length ? hit / tw.length : 0) * 3 + hit * 0.4 + (authorHit ? 2 : 0);
+        found.set(key, {title: x.title, authors: (x.author_name || []).slice(0, 2).join(', '), year: x.first_publish_year || '', isbn: (x.isbn || []).find(i => /^97[89]\d{10}$/.test(i)) || '', score});
+      });
+    }catch{}
+  }
+  return [...found.values()].sort((a, b) => b.score - a.score).filter(c => c.score > 0.5).slice(0, 5);
+}
+/* → {via:'barcode', isbn, title, authors} | {via:'text', isbn?, title?, candidates:[…]} | {via:'none'} */
+async function identifyFromPhoto(file, setStatus){
+  setStatus('Looking for the ISBN barcode in the picture…');
+  const code = await decodeIsbnFromImage(file);
+  if (code){
+    setStatus('ISBN ' + code + ' found — looking up the title…');
+    const w = await worldLookup(code);
+    if (w && w.title) return {via: 'barcode', isbn: code, title: w.title, authors: w.authors};
+    return {via: 'barcode', isbn: code, title: '', candidates: []};
+  }
+  let text = '';
+  try{ text = await ocrText(file, setStatus); }catch(e){ return {via: 'none', error: e.message}; }
+  const printed = (text.match(/97[89][\d\s-]{10,17}/g) || []).map(isbnClean).find(isbn13Valid);   // an ISBN printed in digits
+  if (printed){
+    const w = await worldLookup(printed);
+    if (w && w.title) return {via: 'text', isbn: printed, title: w.title, authors: w.authors, candidates: []};
+  }
+  setStatus('Searching the book database for what is written on the cover…');
+  const candidates = await searchBooks(text);
+  return candidates.length ? {via: 'text', candidates} : {via: 'none'};
+}
+
+let idTarget = 'item', idPhoto = null, addPhotoFile = null;
+$('#idFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const status = msg => { (idTarget === 'add' ? $('#addIdStatus') : $('#lpnStatus')).innerHTML = msg; };
+  try{
+    idPhoto = await resizeToJpeg(f, 1280, 0.72); idPhoto.cond = 'photo'; idPhoto.id = ++photoSeq;
+    const barcode = idTarget === 'add' ? $('#addCode').value.trim() : (cur && cur.barcode);
+    if (idTarget === 'item' && cur){ uploadPhotos(cur.barcode, (cur.rows[0] || {}).row, [idPhoto]); }   // saved to Drive against this barcode
+    else addPhotoFile = idPhoto;                                                                      // saved once the book is added
+    const r = await identifyFromPhoto(f, status);
+    if (idTarget === 'add'){
+      if (r.isbn){ $('#addIsbn').value = r.isbn; }
+      if (r.title && !$('#addName').value.trim()) $('#addName').value = r.title;
+      status(r.title ? `✓ <b>${esc(r.title)}</b>${r.authors ? ' — ' + esc(r.authors) : ''}` : (r.candidates && r.candidates.length ? 'Pick the title below, or type it.' : 'Could not identify it — type the title.'));
+      if (r.candidates && r.candidates.length) $('#addIdStatus').innerHTML += r.candidates.map((c, i) => `<br><button type="button" class="btn ghost sm pickcand" data-i="${i}" style="margin-top:4px;text-align:left">${esc(c.title)}${c.authors ? ' — ' + esc(c.authors) : ''}</button>`).join('');
+      window.__cands = r.candidates || [];
+    } else {
+      showLpnResult(r);
+    }
+  }catch(err){ status('⚠ ' + esc(err.message)); }
+};
+function showLpnResult(r){
+  window.__cands = r.candidates || [];
+  if (r.title){
+    $('#lpnStatus').innerHTML = `✓ Found: <b>${esc(r.title)}</b>${r.authors ? ' — ' + esc(r.authors) : ''}${r.isbn ? ' · ISBN ' + esc(r.isbn) : ''}`;
+    $('#lpnPick').innerHTML = `<button type="button" class="btn block usefound" style="margin-top:8px">Use this title</button>`;
+    window.__found = {title: r.title, isbn: r.isbn || ''};
+  } else if ((r.candidates || []).length){
+    $('#lpnStatus').textContent = 'Is it one of these? Tap the right one — or type the title below.';
+    $('#lpnPick').innerHTML = r.candidates.map((c, i) => `<button type="button" class="btn ghost block pickcand" data-i="${i}" style="margin-top:6px;text-align:left">${esc(c.title)}${c.authors ? ' — ' + esc(c.authors) : ''}${c.year ? ' (' + esc(c.year) + ')' : ''}</button>`).join('');
+  } else {
+    $('#lpnStatus').textContent = r.error ? '⚠ Could not read the picture (' + r.error + '). Type the title below.' : 'Could not identify the book from the picture. Type the title below.';
+    $('#lpnPick').innerHTML = '';
+  }
+}
+async function saveLpnTitle(title, isbn){
+  if (!cur){ return; }
+  const row = (cur.rows[0] || {}).row;
+  try{
+    const r = await api('editBook', {barcode: cur.barcode, row, desc: title, isbn: isbn || '', skipCounts: true});
+    toast('Title saved'); lookCache.clear();
+    const keep = cur.workRow; r.item.workRow = keep; openItem(r.item); scheduleRefresh();
+  }catch(e){ toast(e.message, true); }
+}
+document.addEventListener('click', e => {
+  const idb = e.target.closest('.idphoto'); if (idb){ idTarget = idb.dataset.t; $('#idFile').click(); return; }
+  const pick = e.target.closest('.pickcand');
+  if (pick){
+    const c = (window.__cands || [])[Number(pick.dataset.i)]; if (!c) return;
+    if (idTarget === 'add'){ $('#addName').value = c.title; if (c.isbn && !$('#addIsbn').value) $('#addIsbn').value = c.isbn; }
+    else saveLpnTitle(c.title, c.isbn);
+    return;
+  }
+  if (e.target.closest('.usefound') && window.__found) saveLpnTitle(window.__found.title, window.__found.isbn);
+  if (e.target.closest('#lpnSave')){ const t = $('#lpnTitle').value.trim(); if (!t){ toast('Type the title first', true); return; } saveLpnTitle(t, ''); }
+});
 
 /* ---------------- ISBN database of the world (Open Library, then Google Books) ---------------- */
 const isbnClean = v => String(v || '').replace(/[\s-]/g, '').replace(/_[A-Za-z0-9]+$/, '').toUpperCase();
@@ -708,7 +863,7 @@ const num = b => { const v = inp(b).value; return v === '' ? 0 : Number(v); };
 function openAdd(code, isbn){
   cur = null; stopCam();
   $('#addCode').value = code || '';
-  $('#addName').value = ''; $('#addQty').value = ''; $('#addIsbn').value = isbn || ''; $('#addWorld').innerHTML = '';
+  $('#addName').value = ''; $('#addQty').value = ''; $('#addIsbn').value = isbn || ''; $('#addWorld').innerHTML = ''; $('#addIdStatus').innerHTML = ''; addPhotoFile = null;
   if (isbn) addWorld();
   showStep(0);
   (code ? $('#addName') : $('#addCode')).focus();
@@ -734,6 +889,7 @@ async function saveAdd(){
   try{
     const r = await api('add', {barcode: code, desc, expected: Number(q), isbn: $('#addIsbn').value.trim()});
     toast(r.existed ? 'That barcode was already in the sheet' : 'Added to the sheet');
+    if (addPhotoFile){ uploadPhotos(r.item.barcode, (r.item.rows[0] || {}).row, [addPhotoFile]); addPhotoFile = null; }
     openItem(r.item); scheduleRefresh();
   }catch(e){ toast(e.message, true); }
   busy(b, false);
@@ -756,6 +912,8 @@ function openItem(it){
   $('#iExp').textContent = it.expected;
   renderRows(it);
   showWorld(it);
+  $('#lpnCard').classList.toggle('hidden', !!(it.desc && it.desc.trim()));
+  $('#lpnStatus').textContent = ''; $('#lpnPick').innerHTML = ''; $('#lpnTitle').value = '';
   const bm = boxMap(it), inBoxes = bm.reduce((s, o) => s + boxTotal(o), 0);
   const where = bm.length ? '📦 <b>Where it is now</b><br>' + bm.map(o => `Pallet ${esc(o.pallet)} · Box ${esc(o.box)}: <b>${esc(condText(o))}</b>`).join('<br>') +
     `<br>Total in boxes: <b>${inBoxes}</b>` + (it.received !== null ? ` of ${it.received} counted` : '') + `<br>${palletSummary(bm)}<br><button type="button" class="btn ghost sm editboxes" style="margin-top:6px">✏ Edit boxes</button>` : '';
@@ -764,7 +922,8 @@ function openItem(it){
   $('#iRec').textContent = it.received === null ? '–' : it.received;
   $('#iRecSub').textContent = it.received === null ? '' : breakdown(it);
   ['ln','vg','hold'].forEach(b => inp(b).value = '');
-  $('#holdNote').value = it.hold ? it.holdNote : '';
+  $('#holdNote').value = '';                       // never re-send the note already on file (it used to repeat itself on every save)
+  $('#holdNoteOld').textContent = it.hold && it.holdNote ? 'Already on file: ' + it.holdNote : '';
   updateVerdict();
   showStep(1); stopCam();
   inp('ln').focus();
