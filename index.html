@@ -474,6 +474,8 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
     <input id="cfgToken" type="password" autocomplete="off"></div>
   <div class="field"><label for="cfgUser">Your name (optional, saved with each receipt)</label>
     <input id="cfgUser" type="text" autocomplete="off"></div>
+  <div class="field"><label for="cfgPhoto">Photo drop URL <span style="font-weight:500">(photos go to that person's Google Drive)</span></label>
+    <input id="cfgPhoto" type="url" placeholder="https://script.google.com/macros/s/…/exec"></div>
   <div class="hint">A URL is already built in. Paste a different one to change it.</div>
   <div class="hint" id="timing"></div>
   <div class="row" style="margin-top:14px">
@@ -497,7 +499,7 @@ const store = {
   set(k, v){ try { localStorage.setItem('wr_' + k, JSON.stringify(v)); } catch {} },
 };
 const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbzG39MLv8MU7GFGP28iHRMLfiS3O5011xGh9cnCMvD0ZTobxyLuDoq5yaXkZGur_1iU/exec';
-const cfg = { url: store.get('url', '') || DEFAULT_URL, token: store.get('token', ''), user: store.get('user', '') };   // empty/unset → built-in URL
+const cfg = { url: store.get('url', '') || DEFAULT_URL, token: store.get('token', ''), user: store.get('user', ''), photoUrl: store.get('photoUrl', '') };   // empty/unset → built-in URL
 
 const HOLD_DAYS = 14;               // keep in sync with Code.gs
 const REQUIRE_HOLD_PHOTO = false;    // keep in sync with Code.gs
@@ -590,7 +592,7 @@ async function api(action, p = {}){
 }
 async function apiRaw(action, p = {}){
   const body = {action, token: cfg.token, user: cfg.user, ...p};
-  const write = ['receive','assign','resolve','box','add','photos','renameBox','editBox','editBook'].includes(action);
+  const write = ['receive','assign','resolve','box','add','photos','photoLink','renameBox','editBox','editBook'].includes(action);
   let res;
   try{
     if (write) res = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body), redirect:'follow'}); // text/plain avoids CORS preflight
@@ -1147,7 +1149,16 @@ async function uploadPhotos(barcode, row, list){
   if (!list.length) return;
   setUpl(`Uploading ${list.length} photo${list.length === 1 ? '' : 's'} to Google Drive…`);
   try{
-    const r = await apiRaw('photos', {barcode, row, photos: list.map(p => ({name: p.name, data: p.data, cond: p.cond}))});
+    const payload = list.map(p => ({name: p.name, data: p.data, cond: p.cond}));
+    let r;
+    if (cfg.photoUrl){                                      // the other person's Drive: their photo-drop script saves it there
+      const res = await fetch(cfg.photoUrl, {method: 'POST', body: JSON.stringify({barcode, photos: payload, user: cfg.user, secret: cfg.token}), redirect: 'follow'});
+      r = await res.json();
+      if (!r.ok) throw new Error(r.error || 'Photo drop did not accept the pictures');
+      await apiRaw('photoLink', {barcode, row, url: r.url, saved: r.saved});     // only the folder link goes into the stock sheet
+    } else {
+      r = await apiRaw('photos', {barcode, row, photos: payload});
+    }
     setUpl(`✓ ${r.saved} photo${r.saved === 1 ? '' : 's'} saved to Drive`, 'ok');
   }catch(e){ setUpl('⚠ Photos NOT saved to Drive: ' + e.message, 'bad'); }
 }
@@ -1446,8 +1457,8 @@ async function stopCam(){
 
 /* ---------------- settings ---------------- */
 function openSettings(){
-  $('#timing').textContent = lastTiming ? `Last sheet call (${lastTiming.action}): ${(lastTiming.total / 1000).toFixed(1)} s total` + (lastTiming.server != null ? `, ${(lastTiming.server / 1000).toFixed(1)} s inside the sheet script` : '') : ''; $('#cfgUrl').value = cfg.url; $('#cfgToken').value = cfg.token; $('#cfgUser').value = cfg.user; $('#settings').showModal(); }
-const readCfgForm = () => ({url: $('#cfgUrl').value.trim() || DEFAULT_URL, token: $('#cfgToken').value, user: $('#cfgUser').value.trim()});
+  $('#timing').textContent = lastTiming ? `Last sheet call (${lastTiming.action}): ${(lastTiming.total / 1000).toFixed(1)} s total` + (lastTiming.server != null ? `, ${(lastTiming.server / 1000).toFixed(1)} s inside the sheet script` : '') : ''; $('#cfgUrl').value = cfg.url; $('#cfgToken').value = cfg.token; $('#cfgUser').value = cfg.user; $('#cfgPhoto').value = cfg.photoUrl || ''; $('#settings').showModal(); }
+const readCfgForm = () => ({url: $('#cfgUrl').value.trim() || DEFAULT_URL, token: $('#cfgToken').value, user: $('#cfgUser').value.trim(), photoUrl: $('#cfgPhoto').value.trim()});
 
 /* ---------------- wiring ---------------- */
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
@@ -1524,7 +1535,7 @@ $('#openSettings').onclick = openSettings;
 $('#useDefault').onclick = () => { $('#cfgUrl').value = DEFAULT_URL; };
 $('#saveCfg').onclick = () => {
   const c = readCfgForm(); Object.assign(cfg, c);
-  c.url = c.url || DEFAULT_URL; cfg.url = c.url; store.set('url', c.url); store.set('token', c.token); store.set('user', c.user);
+  c.url = c.url || DEFAULT_URL; cfg.url = c.url; store.set('url', c.url); store.set('token', c.token); store.set('user', c.user); store.set('photoUrl', c.photoUrl);
   $('#settings').close(); resetReceive(); refreshList(true); toast('Saved');
 };
 $('#testConn').onclick = async () => {
