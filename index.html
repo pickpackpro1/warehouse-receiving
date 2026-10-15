@@ -915,8 +915,8 @@ function openItem(it){
   $('#lpnCard').classList.toggle('hidden', !!(it.desc && it.desc.trim()));
   $('#lpnStatus').textContent = ''; $('#lpnPick').innerHTML = ''; $('#lpnTitle').value = '';
   const bm = boxMap(it), inBoxes = bm.reduce((s, o) => s + boxTotal(o), 0);
-  const where = bm.length ? '📦 <b>Where it is now</b><br>' + bm.map(o => `Pallet ${esc(o.pallet)} · Box ${esc(o.box)}: <b>${esc(condText(o))}</b>`).join('<br>') +
-    `<br>Total in boxes: <b>${inBoxes}</b>` + (it.received !== null ? ` of ${it.received} counted` : '') + `<br>${palletSummary(bm)}<br><button type="button" class="btn ghost sm editboxes" style="margin-top:6px">✏ Edit boxes</button>` : '';
+  // short on purpose: the long per-box list slowed the team down (the full list is under ✏ Edit boxes)
+  const where = bm.length ? `📦 <b>${inBoxes}</b>${it.received !== null ? ' of ' + it.received : ''} units in ${bm.length} box${bm.length === 1 ? '' : 'es'} · <button type="button" class="btn ghost sm editboxes">✏ Edit boxes</button>` : '';
   $('#whereBox').innerHTML = where;
   $('#whereBox').classList.toggle('hidden', !where);
   $('#iRec').textContent = it.received === null ? '–' : it.received;
@@ -1024,7 +1024,9 @@ function editableRow(it){          // the row whose boxes you most likely want t
   const withBoxes = rows.find(x => BUCKETS.some(b => (x.locs && x.locs[b] || []).length));
   return (withBoxes || rows[0] || {}).row;
 }
-function renderAssign(it, rowNo){
+let assignFull = false;   // true only when the team asked to edit boxes (then every existing box line is shown)
+function renderAssign(it, rowNo, full){
+  assignFull = !!full;
   const rd = workRowOf(it, rowNo);
   const counted = (it.rows || []).filter(x => x.counted);
   $('#editRowWrap').classList.toggle('hidden', counted.length < 2);
@@ -1034,8 +1036,18 @@ function renderAssign(it, rowNo){
   $('#assignRows').innerHTML = BUCKETS.filter(b => rd[b] > 0).map(b => {
     const sub = b === 'hold' ? 'segregated hold area' : b === 'dmg' ? 'segregated damaged area' : 'FBM sellable';
     const existing = (rd.locs && rd.locs[b]) || [];
+    if (!assignFull){
+      const placed = existing.reduce((n, x) => n + x.qty, 0), left = rd[b] - placed;
+      if (left <= 0) return `<div class="bk ${b}" data-b="${b}" data-mode="done"><div class="bh">${BNAME[b]} · ${rd[b]} unit${rd[b] === 1 ? '' : 's'} <small>— ✓ all already in boxes</small></div></div>`;
+      const rows = [{...(lastLoc[b] || {box:'', pallet:''}), qty: left}];
+      return `<div class="bk ${b}" data-b="${b}" data-mode="new" data-total="${left}" data-existing='${esc(JSON.stringify(existing))}'>
+        <div class="bh">${BNAME[b]} · ${left} to place <small>— ${sub}${placed ? ' · ' + placed + ' already in boxes' : ''}</small></div>
+        <div class="rem"></div>
+        <div class="pls">${rows.map(d => plRow(b, d, false)).join('')}</div>
+        <button type="button" class="btn ghost sm addbox">＋ Add another box for this book</button></div>`;
+    }
     const rows = existing.length ? existing : [{...(lastLoc[b] || {box:'', pallet:''}), qty: rd[b]}];
-    return `<div class="bk ${b}" data-b="${b}" data-total="${rd[b]}">
+    return `<div class="bk ${b}" data-b="${b}" data-mode="full" data-total="${rd[b]}">
       <div class="bh">${BNAME[b]} · ${rd[b]} unit${rd[b] === 1 ? '' : 's'} <small>— ${sub}</small></div>
       <div class="rem"></div>
       <div class="pls">${rows.map(d => plRow(b, d, rows.length > 1)).join('')}</div>
@@ -1063,6 +1075,7 @@ async function saveAssign(){
   const locs = {}, closeBoxes = [];
   let short = 0;
   for (const card of document.querySelectorAll('#assignRows .bk')){
+    if (card.dataset.mode === 'done') continue;                              // already fully in boxes: nothing to send
     const b = card.dataset.b, total = Number(card.dataset.total), list = [];
     const rows = [...card.querySelectorAll('.pl')];
     for (const r of rows){
@@ -1077,10 +1090,15 @@ async function saveAssign(){
       if (r.querySelector('.plcl').checked) closeBoxes.push({box, pallet});
     }
     const sum = list.reduce((s, x) => s + x.qty, 0);
-    if (sum > total){ toast(`${BNAME[b]}: ${sum} units placed but only ${total} counted`, true); return; }
+    if (sum > total){ toast(`${BNAME[b]}: ${sum} units placed but only ${total} still to place`, true); return; }
     short += total - sum;
-    locs[b] = list;
+    if (card.dataset.mode === 'new'){                                       // add the new lines to the boxes already on file
+      const merged = JSON.parse(card.dataset.existing || '[]').map(x => ({box: x.box, pallet: x.pallet, qty: x.qty}));
+      list.forEach(n => { const m = merged.find(x => ukey(x.pallet, x.box) === ukey(n.pallet, n.box)); if (m) m.qty += n.qty; else merged.push(n); });
+      locs[b] = merged;
+    } else locs[b] = list;
   }
+  if (!Object.keys(locs).length){ toast('Everything is already in boxes'); showStep(3); $('#doneTitle').textContent = 'Nothing to place'; $('#doneSub').textContent = 'All counted units already have a box.'; return; }
   let err = segConflict(items, cur, locs);
   for (const b of Object.keys(locs)){ for (const pl of locs[b]){ if (err) break; err = boxOpenError(pl.pallet, pl.box, (workRowOf(cur, cur.workRow).locs || {})[b] || []); } }
   if (err){ toast(err, true); return; }
@@ -1473,8 +1491,8 @@ $('#addCancel').onclick = resetReceive;
 $('#addQty').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); saveAdd(); } };
 $('#addName').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); $('#addQty').focus(); } };
 $('#cancelItem').onclick = resetReceive;
-$('#editRow').onchange = () => renderAssign(cur, Number($('#editRow').value));
-document.addEventListener('click', e => { if (e.target.closest('.editboxes') && cur){ renderAssign(cur, editableRow(cur)); showStep(2); } });
+$('#editRow').onchange = () => renderAssign(cur, Number($('#editRow').value), assignFull);
+document.addEventListener('click', e => { if (e.target.closest('.editboxes') && cur){ renderAssign(cur, editableRow(cur), true); showStep(2); } });
 $('#saveAssign').onclick = saveAssign;
 $('#skipAssign').onclick = skipAssign;
 $('#assignRows').onkeydown = e => {
@@ -1488,7 +1506,7 @@ $('#holdList').onclick = e => { const r = e.target.closest('.list-item'); if (r)
 $('#pendList').onclick = $('#allList').onclick = e => { const r = e.target.closest('.list-item'); if (r) openFromList(r.dataset.code); };
 $('#boxList').onclick = async e => {
   const line = e.target.closest('.bkline');
-  if (line){ const it = items.find(x => x.barcode === line.dataset.code); if (it){ setTab('receive'); cur = it; renderAssign(it, editableRow(it)); showStep(2); } return; }
+  if (line){ const it = items.find(x => x.barcode === line.dataset.code); if (it){ setTab('receive'); cur = it; renderAssign(it, editableRow(it), true); showStep(2); } return; }
   const ed = e.target.closest('.editbox');
   if (ed){ openBoxEditor(ed.dataset); return; }
   const b = e.target.closest('button'); if (!b) return;
