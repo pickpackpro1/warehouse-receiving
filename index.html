@@ -315,7 +315,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
             <button type="button" class="btn ghost sm addph" data-b="hold">📷 Add photos</button>
             <div class="thumbs" data-b="hold"></div>
           </div>
-          <div class="hint">These books must be kept physically apart. A report with these photos (and description, if any) is emailed to YVENTURES, who must decide within 14 days. All photos are also saved to Google Drive under this barcode.</div>
+          <div class="hint">These books must be kept physically apart and resolved within 14 days. Photos are saved to Google Drive under this barcode.</div>
         </div>
 
         <div id="verdict" class="verdict v-none">Enter the number of books in each condition</div>
@@ -461,7 +461,7 @@ table.g td:first-child{font-weight:700;background:var(--bg)}
     <tr><td>Cleanliness</td><td>Pages clean and crisp; no writing, stains or residue</td><td>Light pencil/pen/highlighting OK; no stains or heavy discoloration</td><td>Heavy writing; ink bleeding; stains, food, oil, grime; sticky residue or labels not removable</td></tr>
     <tr><td>Overall</td><td>Appears unread or barely used; comparable to new</td><td>Fully readable, structurally sound; minor cosmetic flaws only</td><td>Readability/durability compromised; likely to cause complaints</td></tr>
   </table>
-  <div class="hint"><b>Borderline or unclear → ON HOLD.</b> On Hold books are segregated, reported to YVENTURES with description + photos, and must be resolved (Very Good or Damaged) within 14 days. Damaged books are segregated, labeled, and wait for instructions. Report recurring damage patterns promptly.</div>
+  <div class="hint"><b>Borderline or unclear → ON HOLD.</b> On Hold books are segregated and must be resolved (Very Good or Damaged) within 14 days. Damaged books are segregated, labeled, and wait for instructions. Report recurring damage patterns promptly.</div>
   <button class="btn block" type="button" id="guideClose" style="margin-top:14px">Close</button>
 </dialog>
 
@@ -974,14 +974,9 @@ async function saveQty(){
   if (cur.received !== null){ mode = await askMode(c); if (!mode) return; }
   const b = $('#saveQty'); busy(b, true);
   try{
-    const r = await api('receive', {barcode: cur.barcode, ...c, mode, holdNote: note, photos: photos.filter(p => p.cond === 'hold').map(p => ({name:p.name, data:p.data}))});
+    const r = await api('receive', {barcode: cur.barcode, ...c, mode, holdNote: note});
     cur = r.item; cur.workRow = r.workRow;
     uploadPhotos(cur.barcode, r.workRow, photos.slice());
-    if (c.hold > 0){
-      if (r.emailed) toast('✓ On Hold report emailed to YVENTURES');
-      else if (r.emailError) toast('Saved, but the report email FAILED: ' + r.emailError + ' — send it manually', true);
-      else toast('Saved (email reports are switched off in Code.gs)');
-    }
     renderAssign(cur, r.workRow); showStep(2);
     scheduleRefresh(); if (mode === 'replace') fireView();
   }catch(e){ toast(e.message, true); }
